@@ -1,0 +1,1353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Morning Pages</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;1,400&family=Playfair+Display:ital,wght@0,700;1,400&family=Caveat:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #2c2416;
+    --ink-light: #6b5c42;
+    --ink-faint: #b8a98a;
+    --parchment: #faf7f0;
+    --parchment-warm: #f5f0e4;
+    --parchment-mid: #ede5d0;
+    --parchment-deep: #d4c9a8;
+    --dawn: #e8b86d;
+    --rose: #c97b84;
+    --sage: #7a9e7e;
+    --accent: #b5602a;
+    --progress-bg: #e8dfc8;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--parchment);
+    color: var(--ink);
+    font-family: 'Lora', Georgia, serif;
+    min-height: 100vh;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(ellipse at 15% 20%, rgba(232,184,109,0.12) 0%, transparent 50%),
+      radial-gradient(ellipse at 85% 80%, rgba(201,123,132,0.08) 0%, transparent 50%),
+      repeating-linear-gradient(0deg, transparent, transparent 27px, rgba(180,160,120,0.07) 27px, rgba(180,160,120,0.07) 28px);
+    pointer-events: none; z-index: 0;
+  }
+
+  /* ── LAYOUT ── */
+  .app-wrap {
+    position: relative; z-index: 1;
+    max-width: 760px; margin: 0 auto;
+    padding: 0 20px 60px;
+  }
+
+  /* ── TOPBAR (user / sign out) ── */
+  .topbar {
+    display: flex; justify-content: flex-end; align-items: center;
+    padding: 10px 0 0; gap: 10px;
+  }
+  .user-email {
+    font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-faint);
+  }
+  .signout-btn {
+    font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-faint);
+    background: none; border: none; cursor: pointer; text-decoration: underline;
+    padding: 0;
+  }
+  .signout-btn:hover { color: var(--rose); }
+
+  /* ── CALENDAR ── */
+  .calendar-strip { padding: 12px 0 10px; text-align: center; }
+  .month-label {
+    font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-light);
+    letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 10px;
+  }
+  .day-dots {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; padding: 0 10px;
+  }
+  .day-dot {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 1.5px solid var(--parchment-deep); background: transparent;
+    transition: transform 0.2s; cursor: default;
+    display: flex; align-items: center; justify-content: center; font-size: 13px;
+  }
+  .day-dot.clickable { cursor: pointer; }
+  .day-dot.clickable:hover { transform: scale(1.3); }
+  .day-dot.today { border-color: var(--dawn); box-shadow: 0 0 0 2px rgba(232,184,109,0.3); }
+  .day-dot.completed, .day-dot.broken, .day-dot.repaired { border-color: transparent; background: transparent; }
+  .day-dot.partial { background: rgba(232,184,109,0.3); border-color: var(--dawn); }
+  .day-dot.past-empty { background: rgba(212,201,168,0.3); border-color: var(--parchment-deep); }
+
+  /* ── MONTH/YEAR NAV ── */
+  .history-toggle {
+    font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-faint);
+    text-align: center; margin: 4px 0 8px; cursor: pointer; transition: color 0.2s;
+  }
+  .history-toggle:hover { color: var(--ink-light); }
+
+  .history-nav {
+    background: var(--parchment-warm); border: 1px solid var(--parchment-deep);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 14px;
+    display: none; max-height: 280px; overflow-y: auto;
+  }
+  .history-nav.open { display: block; }
+  .history-year {
+    font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-faint);
+    letter-spacing: 0.1em; text-transform: uppercase; margin: 10px 0 6px;
+  }
+  .history-year:first-child { margin-top: 0; }
+  .history-month-row {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px;
+  }
+  .history-month-btn {
+    font-family: 'Caveat', cursive; font-size: 14px;
+    background: var(--parchment); border: 1px solid var(--parchment-deep);
+    border-radius: 8px; padding: 3px 10px;
+    color: var(--ink-light); cursor: pointer; transition: all 0.2s;
+  }
+  .history-month-btn:hover { background: var(--parchment-deep); }
+  .history-month-btn.current-month { border-color: var(--dawn); color: var(--accent); }
+
+  .month-days-panel {
+    background: var(--parchment); border: 1px solid var(--parchment-mid);
+    border-radius: 8px; padding: 10px 12px; margin-top: 8px;
+    display: none;
+  }
+  .month-days-panel.open { display: block; }
+  .month-day-row {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .month-day-btn {
+    font-family: 'Caveat', cursive; font-size: 13px;
+    background: var(--parchment-warm); border: 1px solid var(--parchment-deep);
+    border-radius: 6px; padding: 2px 8px;
+    color: var(--ink-light); cursor: pointer; transition: all 0.2s;
+  }
+  .month-day-btn:hover { background: var(--parchment-deep); }
+
+  /* ── HEADER ── */
+  .journal-header { text-align: center; padding: 8px 0 12px; }
+  .journal-title {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(26px, 5vw, 40px); font-style: italic;
+    color: var(--ink); letter-spacing: -0.01em; line-height: 1.1;
+  }
+  .journal-date { font-family: 'Caveat', cursive; font-size: 16px; color: var(--ink-light); margin-top: 4px; }
+
+  /* ── OWL BAR ── */
+  .owl-bar { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 0 0 8px; }
+  .owl-icon { font-size: 20px; cursor: pointer; transition: transform 0.2s; }
+  .owl-icon:hover { transform: scale(1.2); }
+  .owl-bubble {
+    font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-light);
+    background: var(--parchment-warm); border: 1px solid var(--parchment-deep);
+    border-radius: 12px; padding: 4px 12px; cursor: pointer; transition: background 0.2s;
+    position: relative;
+  }
+  .owl-bubble::before {
+    content: ''; position: absolute; left: -6px; top: 50%; transform: translateY(-50%);
+    border: 5px solid transparent; border-right-color: var(--parchment-deep);
+  }
+  .owl-bubble:hover { background: var(--parchment-mid); }
+  .owl-panel {
+    background: var(--parchment-warm); border: 1px solid var(--parchment-deep);
+    border-radius: 12px; padding: 14px 18px; margin: 0 0 10px;
+    display: none; font-family: 'Caveat', cursive; font-size: 15px; color: var(--ink-light);
+  }
+  .owl-panel.open { display: block; }
+  .owl-panel label { display: block; margin-bottom: 8px; }
+  .owl-time-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .owl-panel input[type="time"] {
+    font-family: 'Caveat', cursive; font-size: 15px;
+    border: 1px solid var(--parchment-deep); border-radius: 8px;
+    padding: 4px 10px; background: var(--parchment); color: var(--ink);
+  }
+  .owl-save-btn {
+    background: var(--parchment-deep); border: none; border-radius: 8px;
+    padding: 5px 14px; font-family: 'Caveat', cursive; font-size: 14px;
+    color: var(--ink-light); cursor: pointer;
+  }
+  .owl-save-btn:hover { background: var(--dawn); color: var(--ink); }
+
+  /* ── STREAK BADGES ── */
+  .streak-area { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 4px 0 10px; }
+  .streak-badge {
+    background: var(--parchment-warm); border: 1px solid var(--parchment-deep);
+    border-radius: 20px; padding: 3px 10px;
+    font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-light);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .streak-badge.active { background: linear-gradient(135deg,#fff8e7,#fdefc8); border-color: var(--dawn); color: var(--accent); }
+
+  /* ── REPAIR BANNER ── */
+  .repair-banner {
+    background: rgba(201,123,132,0.1); border: 1px solid rgba(201,123,132,0.3);
+    border-radius: 8px; padding: 8px 14px; font-family: 'Caveat', cursive;
+    font-size: 14px; color: var(--rose); margin-bottom: 10px; text-align: center; display: none;
+  }
+  .repair-banner.visible { display: block; }
+
+  /* ── DAY NAV (prev/next) ── */
+  .day-nav { display: none; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .day-nav.visible { display: flex; }
+  .day-nav-btn {
+    background: var(--parchment-warm); border: 1px solid var(--parchment-deep);
+    border-radius: 16px; padding: 4px 14px;
+    font-family: 'Caveat', cursive; font-size: 14px; color: var(--ink-light);
+    cursor: pointer; transition: background 0.2s;
+  }
+  .day-nav-btn:hover { background: var(--parchment-deep); }
+  .day-nav-btn:disabled { opacity: 0.3; cursor: default; pointer-events: none; }
+  .day-nav-label { font-family: 'Caveat', cursive; font-size: 15px; color: var(--ink-light); }
+
+  /* ── READONLY BADGE ── */
+  .readonly-badge {
+    display: none; font-family: 'Caveat', cursive; font-size: 13px;
+    color: var(--ink-faint); text-align: center; margin-bottom: 6px; letter-spacing: 0.04em;
+  }
+  .readonly-badge.visible { display: block; }
+
+  /* ── PAPER ── */
+  .paper-wrap { position: relative; margin: 0 0 16px; }
+  .paper-shadow { position: absolute; inset: 4px -3px -4px 3px; background: var(--parchment-deep); border-radius: 3px; z-index: 0; }
+  .journal-area {
+    position: relative; z-index: 1; background: #fffef9;
+    border: 1px solid var(--parchment-mid); border-radius: 2px;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.04);
+    padding: 24px 32px 24px 64px;
+    background-image:
+      repeating-linear-gradient(transparent, transparent 27px, rgba(166,146,104,0.18) 27px, rgba(166,146,104,0.18) 28px),
+      linear-gradient(to right, #f5c5c5 0px, #f5c5c5 1px, transparent 1px, transparent 55px, rgba(166,146,104,0.1) 55px, rgba(166,146,104,0.1) 56px);
+  }
+  .journal-textarea {
+    width: 100%; min-height: 480px; background: transparent;
+    border: none; outline: none; resize: none;
+    font-family: 'Lora', serif; font-size: 17px; line-height: 28px;
+    color: var(--ink); caret-color: var(--accent); overflow: hidden;
+  }
+  .journal-textarea::placeholder { color: var(--ink-faint); font-style: italic; }
+  .journal-textarea[readonly] { color: var(--ink-light); cursor: default; }
+
+  /* ── NATURAL FOOTER (no fixed positioning) ── */
+  .page-footer {
+    border-top: 1px solid var(--parchment-mid);
+    padding: 16px 0 0;
+    margin-top: 4px;
+  }
+
+  /* Stats row */
+  .stats-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .word-count-display { font-family: 'Caveat', cursive; font-size: 18px; color: var(--ink-light); min-width: 80px; }
+  .word-count-display .count-num { font-size: 22px; color: var(--ink); font-weight: 600; }
+
+  /* Page stack */
+  .page-stack-wrap { display: flex; align-items: center; gap: 8px; min-width: 70px; }
+  .page-stack { position: relative; width: 28px; height: 34px; flex-shrink: 0; }
+  .page-sheet {
+    position: absolute; width: 22px; height: 28px;
+    background: #fffef5; border: 1px solid var(--parchment-deep);
+    border-radius: 2px; bottom: 0; left: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+  }
+  .page-sheet::after {
+    content: ''; position: absolute; top: 5px; left: 3px; right: 3px; height: 1px;
+    background: rgba(180,160,120,0.25);
+    box-shadow: 0 4px 0 rgba(180,160,120,0.2), 0 8px 0 rgba(180,160,120,0.15);
+  }
+  @keyframes sheet-arrive { from { transform: translateY(-10px) scale(0.85); opacity: 0; } to { opacity: 1; } }
+  .page-stack-count { font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-faint); }
+
+  .save-status { font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-faint); flex: 1; text-align: right; }
+  .save-btn {
+    background: var(--parchment-warm); border: 1px solid var(--parchment-deep);
+    border-radius: 20px; padding: 5px 16px;
+    font-family: 'Caveat', cursive; font-size: 14px; color: var(--ink-light);
+    cursor: pointer; transition: all 0.2s;
+  }
+  .save-btn:hover { background: var(--parchment-deep); }
+
+  /* Progress bar */
+  .progress-track {
+    position: relative; height: 28px; background: var(--progress-bg);
+    border-radius: 14px; border: 1px solid var(--parchment-deep);
+    overflow: visible; margin-bottom: 8px;
+  }
+  .progress-fill {
+    height: 100%; background: linear-gradient(to right, #c8dbe8, #a8c4d4);
+    border-radius: 14px; transition: width 0.6s cubic-bezier(0.34,1.56,0.64,1);
+    min-width: 0; position: relative;
+  }
+  .progress-waves { position: absolute; inset: 0; border-radius: 14px; overflow: hidden; pointer-events: none; }
+  .progress-waves::after {
+    content: ''; position: absolute; top: 0; left: 0; width: 200%; height: 100%;
+    background: repeating-linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.15) 10%, transparent 20%);
+    animation: wave 3s linear infinite;
+  }
+  @keyframes wave { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  .boat {
+    position: absolute; top: 50%; font-size: 22px;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.15)); z-index: 5;
+    animation: bob 2s ease-in-out infinite;
+  }
+  @keyframes bob { 0%,100% { transform: translateY(-50%) rotate(-2deg); } 50% { transform: translateY(calc(-50% - 2px)) rotate(2deg); } }
+  .progress-label {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    font-family: 'Caveat', cursive; font-size: 12px; color: var(--ink-faint);
+    pointer-events: none; z-index: 4;
+  }
+
+  /* Timer row */
+  .timer-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-faint); }
+  .timer-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; background: none; border: none; padding: 0; font-family: 'Caveat', cursive; }
+  .hourglass { font-size: 16px; display: inline-block; animation: hourglass-spin 8s linear infinite; }
+  @keyframes hourglass-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .timer-display { font-size: 14px; color: var(--ink-light); overflow: hidden; max-width: 60px; transition: max-width 0.3s ease, opacity 0.3s ease; white-space: nowrap; }
+  .timer-display.hidden { max-width: 0; opacity: 0; }
+  .pause-indicator { color: var(--rose); opacity: 0; transition: opacity 0.3s; font-size: 12px; }
+  .pause-indicator.visible { opacity: 1; }
+
+  /* Footer links */
+  .footer-links {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    flex-wrap: wrap; padding: 8px 0 0;
+    border-top: 1px solid var(--parchment-mid); margin-top: 6px;
+    font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-faint);
+  }
+  .footer-links a { color: var(--ink-light); text-decoration: none; transition: color 0.2s; }
+  .footer-links a:hover { color: var(--accent); }
+  .kofi-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--parchment-warm); border: 1px solid var(--parchment-deep);
+    border-radius: 20px; padding: 4px 14px;
+    font-family: 'Caveat', cursive; font-size: 13px; color: var(--ink-light);
+    text-decoration: none; transition: all 0.2s;
+  }
+  .kofi-btn:hover { background: #ff5e5b; color: white; border-color: #ff5e5b; }
+
+  /* ── CONFETTI ── */
+  .confetti-container { position: fixed; inset: 0; pointer-events: none; z-index: 9999; overflow: hidden; }
+  .confetti-piece { position: absolute; width: 10px; height: 10px; top: -20px; animation: confetti-fall linear forwards; }
+  @keyframes confetti-fall { 0% { transform: translateY(0) rotate(0deg); opacity: 1; } 80% { opacity: 1; } 100% { transform: translateY(100vh) rotate(720deg); opacity: 0; } }
+
+  /* ── TOASTS ── */
+  .toast-container { position: fixed; top: 80px; left: 50%; transform: translateX(-50%); z-index: 9998; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
+  .toast { background: #fffbf0; border: 1px solid var(--dawn); border-radius: 12px; padding: 12px 20px; font-family: 'Lora', serif; font-size: 15px; color: var(--ink); box-shadow: 0 4px 20px rgba(0,0,0,0.12); max-width: 360px; text-align: center; animation: toast-in 0.4s ease, toast-out 0.4s ease 3.6s forwards; pointer-events: none; }
+  .toast .toast-title { font-family: 'Playfair Display', serif; font-size: 18px; font-style: italic; color: var(--accent); margin-bottom: 4px; }
+  .toast .toast-sub { font-size: 13px; color: var(--ink-light); margin-top: 4px; }
+  @keyframes toast-in { from { opacity:0; transform: translateY(-12px) scale(0.96); } to { opacity:1; transform: translateY(0) scale(1); } }
+  @keyframes toast-out { from { opacity:1; } to { opacity:0; transform: translateY(-8px); } }
+
+  /* ── NOTIF PROMPT ── */
+  .notif-prompt {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: rgba(122,158,126,0.96); color: white;
+    border-radius: 20px; padding: 8px 16px;
+    font-family: 'Caveat', cursive; font-size: 14px;
+    display: flex; align-items: center; gap: 10px; z-index: 200;
+    white-space: nowrap; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    transition: opacity 0.4s, transform 0.4s;
+  }
+  .notif-prompt.hidden { opacity: 0; pointer-events: none; transform: translateX(-50%) translateY(8px); }
+  .notif-prompt button { background: white; color: var(--sage); border: none; border-radius: 12px; padding: 3px 10px; font-family: 'Caveat', cursive; font-size: 13px; cursor: pointer; }
+  .notif-prompt .notif-skip { background: transparent; color: rgba(255,255,255,0.75); border: none; font-family: 'Caveat', cursive; font-size: 13px; cursor: pointer; padding: 0; }
+
+  /* ── DIALOGS ── */
+  .dialog-overlay { position: fixed; inset: 0; background: rgba(44,36,22,0.28); z-index: 9990; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+  .dialog-overlay.show { opacity: 1; pointer-events: auto; }
+  .dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(0.88); background: #fffbf0; border-radius: 20px; padding: 28px 32px; text-align: center; z-index: 9995; max-width: 380px; width: 92%; opacity: 0; pointer-events: none; transition: all 0.35s cubic-bezier(0.34,1.56,0.64,1); box-shadow: 0 12px 48px rgba(0,0,0,0.15); }
+  .dialog.show { opacity: 1; transform: translate(-50%,-50%) scale(1); pointer-events: auto; }
+  .dialog-title { font-family: 'Playfair Display', serif; font-size: 21px; font-style: italic; color: var(--accent); margin-bottom: 10px; }
+  .dialog-body { font-family: 'Caveat', cursive; font-size: 15px; color: var(--ink-light); margin-bottom: 20px; line-height: 1.6; }
+  .dialog-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .dialog-btns button { font-family: 'Caveat', cursive; font-size: 15px; border-radius: 20px; padding: 7px 20px; cursor: pointer; transition: all 0.2s; border: 1px solid var(--parchment-deep); }
+  .btn-primary { background: var(--accent); color: white; border-color: var(--accent) !important; }
+  .btn-primary:hover { opacity: 0.85; }
+  .btn-secondary { background: var(--parchment-warm); color: var(--ink-light); }
+  .btn-secondary:hover { background: var(--parchment-deep); }
+
+  /* ── MILESTONE ── */
+  .milestone-popup { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(0.8); background: #fffbf0; border: 2px solid var(--dawn); border-radius: 20px; padding: 32px 40px; text-align: center; z-index: 9997; max-width: 400px; width: 90%; opacity: 0; pointer-events: none; transition: all 0.4s cubic-bezier(0.34,1.56,0.64,1); box-shadow: 0 12px 48px rgba(0,0,0,0.15); }
+  .milestone-popup.show { opacity: 1; transform: translate(-50%,-50%) scale(1); pointer-events: auto; }
+  .milestone-icon { font-size: 48px; margin-bottom: 12px; }
+  .milestone-title { font-family: 'Playfair Display', serif; font-size: 24px; font-style: italic; color: var(--accent); margin-bottom: 8px; }
+  .milestone-fact { font-size: 14px; color: var(--ink-light); line-height: 1.6; margin-bottom: 16px; }
+  .milestone-close { background: var(--parchment-warm); border: 1px solid var(--parchment-deep); border-radius: 20px; padding: 8px 24px; font-family: 'Caveat', cursive; font-size: 15px; cursor: pointer; color: var(--ink-light); }
+  .milestone-close:hover { background: var(--parchment-deep); }
+
+  /* ── INFO BUTTON ── */
+  .info-btn { position: fixed; top: 14px; left: 14px; width: 32px; height: 32px; border-radius: 50%; background: var(--parchment-warm); border: 1.5px solid var(--parchment-deep); font-size: 17px; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 300; transition: background 0.2s, transform 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .info-btn:hover { background: var(--parchment-mid); transform: scale(1.1); }
+  .info-panel { position: fixed; top: 54px; left: 14px; width: min(360px, calc(100vw - 28px)); background: #fffbf0; border: 1px solid var(--parchment-deep); border-radius: 16px; padding: 20px 22px; z-index: 299; box-shadow: 0 8px 32px rgba(0,0,0,0.12); opacity: 0; pointer-events: none; transform: translateY(-6px) scale(0.97); transition: opacity 0.3s ease, transform 0.3s ease; overflow-y: auto; max-height: calc(100vh - 80px); }
+  .info-panel.show { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
+  .info-panel h2 { font-family: 'Playfair Display', serif; font-size: 18px; font-style: italic; color: var(--accent); margin-bottom: 12px; }
+  .info-panel p, .info-panel li { font-family: 'Caveat', cursive; font-size: 14px; color: var(--ink-light); line-height: 1.6; margin-bottom: 6px; }
+  .info-panel ul { padding-left: 16px; margin-bottom: 10px; }
+  .info-panel .info-section { margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--parchment-mid); }
+  .info-panel .info-section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .info-panel .info-label { font-family: 'Caveat', cursive; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 6px; }
+  .info-close { position: absolute; top: 10px; right: 12px; background: none; border: none; font-size: 18px; color: var(--ink-faint); cursor: pointer; line-height: 1; }
+  .info-close:hover { color: var(--ink); }
+
+  /* ── LOADING SCREEN ── */
+  .loading-screen {
+    position: fixed; inset: 0; background: var(--parchment);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999; transition: opacity 0.4s;
+  }
+  .loading-screen.hidden { opacity: 0; pointer-events: none; }
+  .loading-text { font-family: 'Playfair Display', serif; font-size: 22px; font-style: italic; color: var(--ink-faint); }
+
+  @media (max-width: 600px) {
+    .journal-area { padding: 20px 16px 20px 44px; }
+    .journal-textarea { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Loading screen -->
+<div class="loading-screen" id="loadingScreen">
+  <div class="loading-text">opening the page…</div>
+</div>
+
+<!-- Info button -->
+<button class="info-btn" onclick="toggleInfo()" title="About Morning Pages">ℹ️</button>
+<div class="info-panel" id="infoPanel">
+  <button class="info-close" onclick="toggleInfo()">✕</button>
+  <h2>Morning Pages</h2>
+  <div class="info-section">
+    <div class="info-label">What is this?</div>
+    <p>Morning Pages is a daily writing practice from Julia Cameron's <em>The Artist's Way</em>. Write three pages of unfiltered, stream-of-consciousness words every morning. No editing. No judgment. Just words.</p>
+  </div>
+  <div class="info-section">
+    <div class="info-label">Writing</div>
+    <ul>
+      <li>Three pages = 750 words. Write freely in the lined area.</li>
+      <li>Your word count never decreases — deletions don't cost you progress.</li>
+      <li>Auto-saves every 3 seconds to the cloud. Use save ✦ to save immediately.</li>
+      <li>Past days are sealed and read-only once midnight passes.</li>
+    </ul>
+  </div>
+  <div class="info-section">
+    <div class="info-label">Calendar dots</div>
+    <ul>
+      <li>🤍 completed · 🦉 completed after 9 PM · 💔 missed · 🩹 repaired</li>
+      <li>Click any dot with writing to read that entry.</li>
+    </ul>
+  </div>
+  <div class="info-section">
+    <div class="info-label">History</div>
+    <p>Tap "browse past entries" below the calendar to open month/year navigation. Click a month, then a day to jump to any entry.</p>
+  </div>
+  <div class="info-section">
+    <div class="info-label">Streaks & repair</div>
+    <ul>
+      <li>Milestones at 3, 7, 14, 30, 90, 150, 180, 365, 500, 730, 1095 days.</li>
+      <li>Miss some days? Return within a window equal to your old streak length to be offered repair.</li>
+      <li>Write 6 pages (double days) per missed day to earn a 🩹 and restore your streak.</li>
+    </ul>
+  </div>
+  <div class="info-section">
+    <div class="info-label">Night owl 🦉</div>
+    <p>Click the owl to set a custom "new day begins at" time. Writing after 9 PM earns a 🦉 on the calendar.</p>
+  </div>
+  <div class="info-section">
+    <div class="info-label">Bottom bar</div>
+    <ul>
+      <li>⏳ tap the hourglass to show/hide the timer.</li>
+      <li>⛵ sails as you write; becomes 🏝️ at goal.</li>
+      <li>Page sheets stack — one per 250 words.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="confetti-container" id="confettiContainer"></div>
+<div class="toast-container" id="toastContainer"></div>
+<div class="dialog-overlay" id="dialogOverlay"></div>
+
+<div class="dialog" id="repairDialog">
+  <div class="dialog-title">You're back ✦</div>
+  <div class="dialog-body" id="repairDialogBody"></div>
+  <div class="dialog-btns">
+    <button class="btn-primary" onclick="confirmRepair()">Yes, repair it</button>
+    <button class="btn-secondary" onclick="declineRepair()">Not today</button>
+  </div>
+</div>
+
+<div class="milestone-popup" id="milestonePopup">
+  <div class="milestone-icon" id="milestoneIcon">✦</div>
+  <div class="milestone-title" id="milestoneTitle"></div>
+  <div class="milestone-fact" id="milestoneFact"></div>
+  <button class="milestone-close" onclick="closeMilestone()">carry on →</button>
+</div>
+
+<div class="notif-prompt hidden" id="notifPrompt">
+  <span>🔔 10, 15 & 30 min reminders?</span>
+  <button onclick="requestNotifications()">Enable</button>
+  <button class="notif-skip" onclick="dismissNotifPrompt()">skip</button>
+</div>
+
+<div class="app-wrap">
+  <div class="topbar">
+    <span class="user-email" id="userEmail"></span>
+    <button class="signout-btn" onclick="signOut()">sign out</button>
+  </div>
+
+  <div class="calendar-strip">
+    <div class="month-label" id="monthLabel"></div>
+    <div class="day-dots" id="dayDots"></div>
+  </div>
+
+  <div class="history-toggle" onclick="toggleHistory()">▾ browse past entries</div>
+  <div class="history-nav" id="historyNav">
+    <div id="historyContent"></div>
+    <div class="month-days-panel" id="monthDaysPanel">
+      <div class="month-day-row" id="monthDayRow"></div>
+    </div>
+  </div>
+
+  <div class="streak-area" id="streakArea"></div>
+
+  <div class="journal-header">
+    <div class="journal-title">morning pages</div>
+    <div class="journal-date" id="journalDate"></div>
+  </div>
+
+  <div class="owl-bar">
+    <span class="owl-icon" onclick="toggleOwlPanel()">🦉</span>
+    <span class="owl-bubble" onclick="toggleOwlPanel()">need more time?</span>
+  </div>
+  <div class="owl-panel" id="owlPanel">
+    <label>New writing day begins at:</label>
+    <div class="owl-time-row">
+      <input type="time" id="dayStartTime" value="00:00">
+      <button class="owl-save-btn" onclick="saveOwlTime()">save</button>
+      <span id="owlNote" style="font-size:13px;color:var(--ink-faint)"></span>
+    </div>
+  </div>
+
+  <div id="repairBanner" class="repair-banner"></div>
+
+  <div class="day-nav" id="dayNav">
+    <button class="day-nav-btn" id="prevDayBtn" onclick="navigateDay(-1)">← prev</button>
+    <span class="day-nav-label" id="viewingDateLabel"></span>
+    <button class="day-nav-btn" id="nextDayBtn" onclick="navigateDay(1)">next →</button>
+  </div>
+
+  <div class="readonly-badge" id="readonlyBadge">✦ this day is sealed — words rest here ✦</div>
+
+  <div class="paper-wrap">
+    <div class="paper-shadow"></div>
+    <div class="journal-area">
+      <textarea id="journalTextarea" class="journal-textarea"
+        placeholder="Begin here. Let the words come…"
+        spellcheck="true" autocorrect="on"></textarea>
+    </div>
+  </div>
+
+  <!-- Natural (non-fixed) footer -->
+  <div class="page-footer">
+    <div class="stats-row">
+      <div class="word-count-display">
+        <span class="count-num" id="wordCountDisplay">0</span>
+        <span> words</span>
+      </div>
+      <div class="page-stack-wrap">
+        <div class="page-stack" id="pageStack"></div>
+        <div class="page-stack-count" id="pageStackCount"></div>
+      </div>
+      <div class="save-status" id="saveStatus">not saved</div>
+      <button class="save-btn" onclick="manualSave()">save ✦</button>
+    </div>
+
+    <div class="progress-track" id="progressTrack">
+      <div class="progress-fill" id="progressFill"><div class="progress-waves"></div></div>
+      <div class="boat" id="boatEmoji">⛵</div>
+      <div class="progress-label" id="progressLabel">750 to go</div>
+    </div>
+
+    <div class="timer-row">
+      <button class="timer-toggle" onclick="toggleTimer()">
+        <span class="hourglass">⏳</span>
+        <span class="timer-display" id="timerDisplay">0:00</span>
+      </button>
+      <div id="pauseIndicator" class="pause-indicator">☕ taking a pause…</div>
+      <div id="completionTime" style="font-size:13px;color:var(--ink-faint)"></div>
+    </div>
+
+    <div class="footer-links">
+      <div>More tools like this: <a href="https://www.tiktok.com/@instageorgious" target="_blank" rel="noopener">@instageorgious</a></div>
+      <a class="kofi-btn" href="https://ko-fi.com/instageorgious" target="_blank" rel="noopener">☕ buy me a ko-fi</a>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── SUPABASE ──────────────────────────────────────────────────────────────────
+const SUPABASE_URL = 'https://hgahutrgojkftkufeirn.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_J8a3aaiZm9PBFYQ0FLSx-g_71DYwaQL';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let currentUser = null;
+
+// ── CONSTANTS ─────────────────────────────────────────────────────────────────
+const WORDS_PER_PAGE  = 250;
+const PAGES_GOAL      = 3;
+const GOAL_WORDS      = 750;
+const DOUBLE_GOAL     = 1500;
+const AUTOSAVE_MS     = 3000;
+const PAUSE_THRESHOLD = 120000;
+const NOTIF_MINUTES   = [10, 15, 30];
+const STACK_INCR      = 250;
+const OWL_HOUR        = 21;
+
+// ── STATE (mirrors Supabase) ──────────────────────────────────────────────────
+let state = {
+  days: {},   // ds -> {text, peakWords, completedPages, pagesCarried, isOwl, completedAt}
+  streaks: {
+    current: 0, repairMode: false, prevStreakLength: 0,
+    missedDays: [], repairedDays: [], doubleDaysCompleted: 0,
+    bonusStreakDays: 0, windowExpires: null,
+  },
+  lifetimeWords: 0,
+  milestonesHit: [],
+  streakMilestonesHit: [],
+  dayStartTime: '00:00',
+};
+
+// ── SESSION VARS ──────────────────────────────────────────────────────────────
+let sessionPeakWords  = 0;
+let displayedWords    = 0;
+let timerSeconds      = 0;
+let timerInterval     = null;
+let lastTypedTime     = null;
+let isPaused          = false;
+let sessionStarted    = false;
+let completionReached = false;
+let confettiDone      = false;
+let doubleReached     = false;
+let notificationsEnabled = false;
+let notifTimeouts     = [];
+let timerVisible      = true;
+let renderedSheets    = 0;
+let viewingDate       = null;
+let today, todayStr;
+let autosaveTimer     = null;
+let pendingSave       = false;
+
+// ── MILESTONES ────────────────────────────────────────────────────────────────
+const WORD_MILESTONES = [
+  {words:1000,   icon:'🌱',title:'First Thousand',       fact:'The seed is planted.'},
+  {words:2000,   icon:'✉️',title:'Two Thousand',          fact:'Two thousand words — the length of a short story.'},
+  {words:5000,   icon:'📖',title:'Five Thousand',         fact:'Fitzgerald wrote the first chapter of Gatsby in about this many words.'},
+  {words:7500,   icon:'🌊',title:'Seven and a Half',      fact:'7,500 words of your inner world made real.'},
+  {words:10000,  icon:'🏔️',title:'Ten Thousand',          fact:'10,000 words. Something is stirring.'},
+  {words:20000,  icon:'🗺️',title:'Twenty Thousand',       fact:'20,000 words is a novella. You have written a world.'},
+  {words:50000,  icon:'📚',title:'Fifty Thousand',        fact:"NaNoWriMo's goal is 50,000 words. You've hit it in morning truth."},
+  {words:75000,  icon:'🌅',title:'Seventy-Five Thousand', fact:"The average published novel is 70–90k words. You've lived there."},
+  {words:100000, icon:'🏛️',title:'One Hundred Thousand',  fact:"War and Peace is ~580,000 words. You're 17% of the way to Tolstoy."},
+  {words:250000, icon:'🌌',title:'A Quarter Million',     fact:'You have written a third of scripture in morning honesty.'},
+  {words:500000, icon:'🌠',title:'Half a Million',        fact:'More than most humans will ever write.'},
+  {words:750000, icon:'💫',title:'Three Quarters of a Million',fact:'Approaching the territory of the great serialists.'},
+  {words:1000000,icon:'👑',title:'One Million Words',     fact:'A million words. You are among a rare few in human history.'},
+];
+const STREAK_MILESTONES = [
+  {days:3,   icon:'🔥',title:'Three Days',    fact:'A habit is beginning to breathe.'},
+  {days:7,   icon:'🌟',title:'One Week',       fact:'One whole week of mornings claimed for yourself.'},
+  {days:14,  icon:'🌙',title:'Two Weeks',      fact:'Your mornings have changed shape.'},
+  {days:30,  icon:'🗓️',title:'One Month',      fact:'Julia Cameron would weep with joy.'},
+  {days:90,  icon:'🌺',title:'Three Months',   fact:'Your habit is now ancient.'},
+  {days:150, icon:'🦋',title:'Five Months',    fact:'You have built a second self on the page.'},
+  {days:180, icon:'☯️',title:'Six Months',     fact:'You are a practitioner now.'},
+  {days:365, icon:'🌍',title:'One Year',       fact:'You are not the same person who began.'},
+  {days:500, icon:'✨',title:'Five Hundred Days',fact:'500 days. Something most only dream about.'},
+  {days:730, icon:'🪐',title:'Two Years',      fact:'As natural as breathing.'},
+  {days:1095,icon:'🌠',title:'Three Years',    fact:'You are the practice.'},
+];
+
+// ── DATE UTILS ────────────────────────────────────────────────────────────────
+function dateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function parseDateStr(ds) { const [y,m,d]=ds.split('-').map(Number); return new Date(y,m-1,d); }
+function addDays(ds,n) { const d=parseDateStr(ds); d.setDate(d.getDate()+n); return dateStr(d); }
+function getDaysInMonth(y,m) { return new Date(y,m+1,0).getDate(); }
+function countWords(t) { return t.trim()==='' ? 0 : t.trim().split(/\s+/).filter(w=>w.length>0).length; }
+function formatTime(s) { return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; }
+function computeToday() {
+  const now=new Date();
+  const [sh,sm]=(state.dayStartTime||'00:00').split(':').map(Number);
+  const startMin=sh*60+sm;
+  if (startMin>0 && now.getHours()*60+now.getMinutes()<startMin) { const p=new Date(now); p.setDate(now.getDate()-1); return p; }
+  return now;
+}
+
+// ── SUPABASE DATA LAYER ───────────────────────────────────────────────────────
+async function loadAllEntries() {
+  const { data, error } = await sb.from('entries')
+    .select('*')
+    .eq('user_id', currentUser.id);
+  if (error) { console.error('loadAllEntries', error); return; }
+  state.days = {};
+  for (const row of data) {
+    state.days[row.date] = {
+      text: row.text || '',
+      peakWords: row.peak_words || 0,
+      completedPages: row.completed_pages || 0,
+      pagesCarried: row.pages_carried || 0,
+      isOwl: row.is_owl || false,
+      completedAt: row.completed_at || null,
+    };
+  }
+}
+
+async function loadSettings() {
+  const { data, error } = await sb.from('user_settings')
+    .select('*')
+    .eq('user_id', currentUser.id)
+    .single();
+  if (error || !data) return;
+  state.dayStartTime       = data.day_start_time || '00:00';
+  state.lifetimeWords      = data.lifetime_words || 0;
+  state.milestonesHit      = data.milestones_hit || [];
+  state.streakMilestonesHit= data.streak_milestones_hit || [];
+  state.streaks.repairMode       = data.streak_repair_mode || false;
+  state.streaks.prevStreakLength  = data.streak_prev_length || 0;
+  state.streaks.missedDays       = data.streak_missed_days || [];
+  state.streaks.repairedDays     = data.streak_repaired_days || [];
+  state.streaks.doubleDaysCompleted = data.streak_double_days || 0;
+  state.streaks.bonusStreakDays   = data.streak_bonus_days || 0;
+  state.streaks.windowExpires     = data.streak_window_expires || null;
+}
+
+async function saveEntry(ds, dayData) {
+  const { error } = await sb.from('entries').upsert({
+    user_id: currentUser.id,
+    date: ds,
+    text: dayData.text || '',
+    peak_words: dayData.peakWords || 0,
+    completed_pages: dayData.completedPages || 0,
+    pages_carried: dayData.pagesCarried || 0,
+    is_owl: dayData.isOwl || false,
+    completed_at: dayData.completedAt || null,
+  }, { onConflict: 'user_id,date' });
+  if (error) console.error('saveEntry', error);
+}
+
+async function saveSettings() {
+  const sd = state.streaks;
+  const { error } = await sb.from('user_settings').upsert({
+    user_id: currentUser.id,
+    day_start_time: state.dayStartTime,
+    lifetime_words: state.lifetimeWords,
+    milestones_hit: state.milestonesHit,
+    streak_milestones_hit: state.streakMilestonesHit,
+    streak_repair_mode: sd.repairMode,
+    streak_prev_length: sd.prevStreakLength,
+    streak_missed_days: sd.missedDays,
+    streak_repaired_days: sd.repairedDays,
+    streak_double_days: sd.doubleDaysCompleted,
+    streak_bonus_days: sd.bonusStreakDays,
+    streak_window_expires: sd.windowExpires,
+  }, { onConflict: 'user_id' });
+  if (error) console.error('saveSettings', error);
+}
+
+// ── AUTH ──────────────────────────────────────────────────────────────────────
+async function signOut() {
+  await sb.auth.signOut();
+  window.location.href = 'index.html';
+}
+
+// ── OWL PANEL ─────────────────────────────────────────────────────────────────
+function toggleOwlPanel() {
+  const p = document.getElementById('owlPanel');
+  p.classList.toggle('open');
+  if (p.classList.contains('open')) document.getElementById('dayStartTime').value = state.dayStartTime||'00:00';
+}
+async function saveOwlTime() {
+  state.dayStartTime = document.getElementById('dayStartTime').value;
+  await saveSettings();
+  today=computeToday(); todayStr=dateStr(today);
+  const n=document.getElementById('owlNote');
+  n.textContent=`saved! new day starts at ${state.dayStartTime}`;
+  setTimeout(()=>{ n.textContent=''; }, 2500);
+  document.getElementById('owlPanel').classList.remove('open');
+}
+
+// ── IS DAY LOCKED ─────────────────────────────────────────────────────────────
+function isDayLocked(ds) { return ds!==todayStr && parseDateStr(ds)<parseDateStr(todayStr); }
+
+// ── CALENDAR ──────────────────────────────────────────────────────────────────
+function getDotInfo(ds) {
+  const data=state.days[ds];
+  const needed=(PAGES_GOAL+(data?.pagesCarried||0));
+  const completed=data?.completedPages||0;
+  const repaired=(state.streaks.repairedDays||[]).includes(ds);
+  const missed=(state.streaks.missedDays||[]).includes(ds)&&!repaired;
+  if (repaired) return {emoji:'🩹',cls:'repaired'};
+  if (missed)   return {emoji:'💔',cls:'broken'};
+  if (completed>=needed&&completed>0) return {emoji:data?.isOwl?'🦉':'🤍',cls:'completed'};
+  return null;
+}
+
+function renderCalendar() {
+  const y=today.getFullYear(), m=today.getMonth();
+  const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('monthLabel').textContent=months[m]+' '+y;
+  const el=document.getElementById('dayDots');
+  el.innerHTML='';
+  for (let d=1;d<=getDaysInMonth(y,m);d++) {
+    const ds=dateStr(new Date(y,m,d));
+    const isToday=ds===todayStr;
+    const isPast=!isToday&&parseDateStr(ds)<parseDateStr(todayStr);
+    const dot=document.createElement('div');
+    dot.className='day-dot';
+    dot.title=new Date(y,m,d).toLocaleDateString(undefined,{month:'short',day:'numeric'});
+    const info=getDotInfo(ds);
+    if (info) {
+      dot.classList.add(info.cls);
+      dot.textContent=info.emoji;
+      if (state.days[ds]?.text) { dot.classList.add('clickable'); dot.addEventListener('click',()=>jumpToDay(ds)); }
+    } else if (isToday) {
+      dot.classList.add('today');
+      if ((state.days[ds]?.completedPages||0)>0) dot.classList.add('partial');
+    } else if (isPast) {
+      dot.classList.add('past-empty');
+    }
+    el.appendChild(dot);
+  }
+}
+
+// ── HISTORY NAV ───────────────────────────────────────────────────────────────
+function toggleHistory() {
+  document.getElementById('historyNav').classList.toggle('open');
+  if (document.getElementById('historyNav').classList.contains('open')) renderHistory();
+}
+
+function renderHistory() {
+  const content=document.getElementById('historyContent');
+  content.innerHTML='';
+  document.getElementById('monthDaysPanel').classList.remove('open');
+
+  // Group written days by year/month
+  const written = Object.keys(state.days).filter(ds=>state.days[ds]?.text).sort().reverse();
+  if (!written.length) { content.innerHTML='<div style="font-family:Caveat,cursive;font-size:14px;color:var(--ink-faint)">No entries yet.</div>'; return; }
+
+  const byYear = {};
+  for (const ds of written) {
+    const [y,m] = ds.split('-');
+    if (!byYear[y]) byYear[y]=new Set();
+    byYear[y].add(m);
+  }
+
+  const monthNames=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const currentYM = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+
+  for (const year of Object.keys(byYear).sort().reverse()) {
+    const yLabel=document.createElement('div');
+    yLabel.className='history-year'; yLabel.textContent=year;
+    content.appendChild(yLabel);
+    const row=document.createElement('div');
+    row.className='history-month-row';
+    for (const month of [...byYear[year]].sort().reverse()) {
+      const btn=document.createElement('button');
+      btn.className='history-month-btn';
+      btn.textContent=monthNames[parseInt(month,10)-1];
+      const ym=`${year}-${month}`;
+      if (ym===currentYM) btn.classList.add('current-month');
+      btn.addEventListener('click',()=>showMonthDays(year,month,written));
+      row.appendChild(btn);
+    }
+    content.appendChild(row);
+  }
+}
+
+function showMonthDays(year, month, allWritten) {
+  const panel=document.getElementById('monthDaysPanel');
+  const rowEl=document.getElementById('monthDayRow');
+  rowEl.innerHTML='';
+  panel.classList.add('open');
+
+  const days=allWritten.filter(ds=>ds.startsWith(`${year}-${month}`)).sort().reverse();
+  for (const ds of days) {
+    const btn=document.createElement('button');
+    btn.className='month-day-btn';
+    const d=parseDateStr(ds);
+    const info=getDotInfo(ds);
+    btn.textContent=`${info?info.emoji+' ':''}${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}`;
+    btn.addEventListener('click',()=>{ jumpToDay(ds); document.getElementById('historyNav').classList.remove('open'); });
+    rowEl.appendChild(btn);
+  }
+}
+
+// ── DAY NAVIGATION ────────────────────────────────────────────────────────────
+function jumpToDay(ds) { viewingDate=ds; renderViewingDay(); window.scrollTo({top:0,behavior:'smooth'}); }
+function navigateDay(delta) {
+  const base=viewingDate||todayStr;
+  const next=addDays(base,delta);
+  if (parseDateStr(next)>parseDateStr(todayStr)) return;
+  viewingDate=next; renderViewingDay();
+}
+
+function renderViewingDay() {
+  const ds=viewingDate||todayStr;
+  const isToday=ds===todayStr;
+  const locked=isDayLocked(ds);
+  const data=getDayData(ds);
+  const ta=document.getElementById('journalTextarea');
+
+  ta.value=data.text||'';
+  ta.readOnly=locked;
+  ta.style.height='auto';
+  ta.style.height=Math.max(480,ta.scrollHeight)+'px';
+
+  const d=parseDateStr(ds);
+  document.getElementById('journalDate').textContent=d.toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  document.getElementById('readonlyBadge').classList.toggle('visible',locked);
+  document.getElementById('dayNav').classList.toggle('visible',!isToday);
+  document.getElementById('viewingDateLabel').textContent=d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+
+  const prevDs=addDays(ds,-1), nextDs=addDays(ds,1);
+  document.getElementById('prevDayBtn').disabled=!state.days[prevDs]?.text;
+  document.getElementById('nextDayBtn').disabled=parseDateStr(nextDs)>parseDateStr(todayStr);
+
+  if (locked) {
+    displayedWords=data.peakWords||0;
+    rebuildStack(displayedWords,false);
+    updateWordDisplay();
+    document.getElementById('saveStatus').textContent='sealed';
+  } else {
+    sessionPeakWords=data.peakWords||0;
+    displayedWords=sessionPeakWords;
+    rebuildStack(displayedWords,false);
+    updateWordDisplay();
+  }
+  setTimeout(updateProgress,50);
+}
+
+// ── PAGE STACK ────────────────────────────────────────────────────────────────
+function rebuildStack(targetWords,animate) {
+  document.getElementById('pageStack').innerHTML='';
+  renderedSheets=0;
+  const n=Math.floor(targetWords/STACK_INCR);
+  for (let i=0;i<n;i++) { addSheet(i,animate); renderedSheets++; }
+  const pages=Math.floor(targetWords/WORDS_PER_PAGE);
+  document.getElementById('pageStackCount').textContent=pages>0?`${pages}p`:'';
+}
+
+function addSheet(idx,animate) {
+  const stack=document.getElementById('pageStack');
+  const sheet=document.createElement('div');
+  sheet.className='page-sheet';
+  const off=Math.min(idx,5);
+  sheet.style.left=(off*1.5)+'px'; sheet.style.bottom=(off*1.5)+'px'; sheet.style.zIndex=idx;
+  sheet.style.transform=`rotate(${(idx%2===0?1:-1)*Math.random()*1.5}deg)`;
+  if (animate) sheet.style.animation='sheet-arrive 0.35s cubic-bezier(0.34,1.56,0.64,1) forwards';
+  stack.appendChild(sheet);
+}
+
+function updateWordDisplay() {
+  document.getElementById('wordCountDisplay').textContent=displayedWords;
+  const n=Math.floor(displayedWords/STACK_INCR);
+  while (renderedSheets<n) { addSheet(renderedSheets,true); renderedSheets++; }
+  const pages=Math.floor(displayedWords/WORDS_PER_PAGE);
+  document.getElementById('pageStackCount').textContent=renderedSheets>0&&pages>0?`${pages}p`:(renderedSheets>0?'':'');
+  updateProgress();
+}
+
+// ── PROGRESS ──────────────────────────────────────────────────────────────────
+function updateProgress() {
+  const goal=state.streaks.repairMode?DOUBLE_GOAL:GOAL_WORDS;
+  const pct=Math.min(displayedWords/goal,1);
+  const trackW=document.getElementById('progressTrack').offsetWidth;
+  document.getElementById('progressFill').style.width=(pct*100)+'%';
+  const boatPx=Math.max(14,Math.min(trackW-14,pct*trackW));
+  const boat=document.getElementById('boatEmoji');
+  boat.style.left=boatPx+'px'; boat.style.right='auto';
+  if (pct>=1) { boat.textContent='🏝️'; boat.style.animation='none'; document.getElementById('progressLabel').textContent='✦ done!'; }
+  else { boat.textContent='⛵'; boat.style.animation=''; document.getElementById('progressLabel').textContent=Math.max(0,goal-displayedWords)+' to go'; }
+}
+
+// ── STREAK ────────────────────────────────────────────────────────────────────
+function calculateStreak() {
+  const sd=state.streaks;
+  const todayData=state.days[todayStr];
+  const tNeeded=PAGES_GOAL+(todayData?.pagesCarried||0);
+  const tDone=(todayData?.completedPages||0)>=tNeeded;
+  let streak=0;
+  for (let i=tDone?0:1;i<1200;i++) {
+    const ds=addDays(todayStr,-i);
+    const data=state.days[ds];
+    const needed=PAGES_GOAL+(data?.pagesCarried||0);
+    const repaired=(sd.repairedDays||[]).includes(ds);
+    if ((data&&data.completedPages>=needed)||repaired) streak++;
+    else if (i>(tDone?0:1)) break;
+  }
+  return streak+(sd.bonusStreakDays||0);
+}
+
+function checkStreakMilestones(streak) {
+  for (const sm of STREAK_MILESTONES) {
+    const key=`streak_${sm.days}`;
+    if (streak>=sm.days&&!state.streakMilestonesHit.includes(key)) {
+      state.streakMilestonesHit.push(key);
+      setTimeout(()=>showMilestone(sm.icon,sm.title,sm.fact),600);
+    }
+  }
+}
+
+function renderStreaks() {
+  const streak=calculateStreak();
+  state.streaks.current=streak;
+  checkStreakMilestones(streak);
+  const area=document.getElementById('streakArea');
+  area.innerHTML='';
+  if (streak>0) {
+    const b=document.createElement('div'); b.className='streak-badge active'; b.innerHTML=`🔥 ${streak} day streak`; area.appendChild(b);
+  }
+  const defs=[{days:3,icon:'🔥',label:'3 day'},{days:7,icon:'🌟',label:'7 day'},{days:14,icon:'🌙',label:'2 weeks'},{days:30,icon:'🗓️',label:'month'},{days:90,icon:'🌺',label:'3 months'},{days:150,icon:'🦋',label:'5 months'},{days:180,icon:'☯️',label:'6 months'},{days:365,icon:'🌍',label:'1 year'},{days:500,icon:'✨',label:'500 days'},{days:730,icon:'🪐',label:'2 years'},{days:1095,icon:'🌠',label:'3 years'}];
+  let shown=0;
+  for (const def of [...defs].reverse()) {
+    if (streak>=def.days&&shown<3) { const b=document.createElement('div'); b.className='streak-badge active'; b.innerHTML=`${def.icon} ${def.label}`; area.appendChild(b); shown++; }
+  }
+}
+
+// ── STREAK BREAK DETECTION ────────────────────────────────────────────────────
+function detectStreakBreak() {
+  const sd=state.streaks;
+  if (sd.repairMode) return;
+  let firstMissed=null, gapDays=[], lastCompletedDs=null;
+  for (let i=1;i<1200;i++) {
+    const ds=addDays(todayStr,-i);
+    const data=state.days[ds];
+    const needed=PAGES_GOAL+(data?.pagesCarried||0);
+    const done=data&&data.completedPages>=needed;
+    const rep=(sd.repairedDays||[]).includes(ds);
+    if (done||rep) { if (firstMissed!==null) { lastCompletedDs=ds; break; } }
+    else { if (firstMissed===null) firstMissed=ds; gapDays.push(ds); }
+  }
+  if (!firstMissed||!lastCompletedDs) return;
+  let prevLen=0;
+  for (let i=0;i<1200;i++) {
+    const ds=addDays(lastCompletedDs,-i);
+    const data=state.days[ds];
+    const needed=PAGES_GOAL+(data?.pagesCarried||0);
+    const rep=(sd.repairedDays||[]).includes(ds);
+    if ((data&&data.completedPages>=needed)||rep) prevLen++; else break;
+  }
+  const windowExpires=addDays(firstMissed,prevLen);
+  if (parseDateStr(todayStr)>parseDateStr(windowExpires)) return;
+  sd._pendingRepair={missedDays:gapDays,prevStreakLength:prevLen,windowExpires};
+}
+
+// ── REPAIR ────────────────────────────────────────────────────────────────────
+function showRepairDialog() {
+  const pr=state.streaks._pendingRepair||{};
+  const missed=(pr.missedDays||[]).length, prev=pr.prevStreakLength||0;
+  document.getElementById('repairDialogBody').textContent=`You had a ${prev}-day streak and missed ${missed} day${missed!==1?'s':''}. Write 6 pages on ${missed} separate day${missed!==1?'s':''} to earn a 🩹 for each and restore your full streak.`;
+  showDialog('repairDialog');
+}
+
+async function confirmRepair() {
+  hideDialog('repairDialog');
+  const sd=state.streaks, pr=sd._pendingRepair||{};
+  sd.repairMode=true; sd.missedDays=pr.missedDays||[]; sd.prevStreakLength=pr.prevStreakLength||0;
+  sd.windowExpires=pr.windowExpires||null; sd.doubleDaysCompleted=0;
+  if (!sd.repairedDays) sd.repairedDays=[];
+  delete sd._pendingRepair;
+  await saveSettings();
+  resetForDoubleDay(); updateRepairBanner();
+  showToast('Repair mode ✦','Write 6 pages today to earn your first 🩹');
+}
+
+function declineRepair() { hideDialog('repairDialog'); delete state.streaks._pendingRepair; }
+
+function resetForDoubleDay() {
+  displayedWords=0; sessionPeakWords=0; completionReached=false; confettiDone=false; doubleReached=false;
+  rebuildStack(0,false); updateWordDisplay(); updateProgress();
+}
+
+async function handleDoubleDay() {
+  const sd=state.streaks;
+  const unrepaired=(sd.missedDays||[]).filter(d=>!(sd.repairedDays||[]).includes(d));
+  if (!unrepaired.length) return;
+  const target=unrepaired[unrepaired.length-1];
+  sd.repairedDays.push(target); sd.doubleDaysCompleted++; sd.bonusStreakDays=(sd.bonusStreakDays||0)+1;
+  await saveSettings();
+  const remaining=unrepaired.length-1;
+  showToast('🩹 Day repaired!',remaining>0?`${remaining} more to go`:'All days mended!');
+  sprayConfetti();
+  if (remaining===0) {
+    sd.repairMode=false; await saveSettings(); updateRepairBanner(); renderCalendar(); renderStreaks();
+    setTimeout(()=>showToast('Streak fully restored ✦','Your full streak is back.'),2200);
+  } else {
+    updateRepairBanner(); renderCalendar(); renderStreaks();
+    setTimeout(()=>{ resetForDoubleDay(); showToast('Keep going ✦','Write another 6 pages for the next 🩹'); },2500);
+  }
+}
+
+function updateRepairBanner() {
+  const banner=document.getElementById('repairBanner'), sd=state.streaks;
+  if (sd.repairMode&&(sd.missedDays||[]).length>0) {
+    const rem=(sd.missedDays||[]).filter(d=>!(sd.repairedDays||[]).includes(d)).length;
+    banner.textContent=`🩹 Repair mode — ${rem} double day${rem!==1?'s':''} remaining`;
+    banner.classList.add('visible');
+  } else { banner.classList.remove('visible'); }
+}
+
+// ── COMPLETION ────────────────────────────────────────────────────────────────
+async function markDayComplete() {
+  const data=getDayData(todayStr);
+  const needed=PAGES_GOAL+(data.pagesCarried||0);
+  data.completedPages=needed;
+  data.isOwl=new Date().getHours()>=OWL_HOUR;
+  data.completedAt=new Date().toISOString();
+  await saveEntry(todayStr,data);
+  renderCalendar(); renderStreaks();
+}
+
+function checkRepairEligibility() {
+  if (state.streaks.repairMode) return;
+  if (state.streaks._pendingRepair) showRepairDialog();
+}
+
+// ── DIALOGS ───────────────────────────────────────────────────────────────────
+function showDialog(id) { document.getElementById('dialogOverlay').classList.add('show'); document.getElementById(id).classList.add('show'); }
+function hideDialog(id) { document.getElementById('dialogOverlay').classList.remove('show'); document.getElementById(id).classList.remove('show'); }
+
+// ── MILESTONE ─────────────────────────────────────────────────────────────────
+function showMilestone(icon,title,fact) {
+  document.getElementById('milestoneIcon').textContent=icon;
+  document.getElementById('milestoneTitle').textContent=title;
+  document.getElementById('milestoneFact').textContent=fact;
+  document.getElementById('milestonePopup').classList.add('show');
+}
+function closeMilestone() { document.getElementById('milestonePopup').classList.remove('show'); }
+
+function checkWordMilestones(words) {
+  for (const m of WORD_MILESTONES) {
+    const key=`words_${m.words}`;
+    if (words>=m.words&&!state.milestonesHit.includes(key)) {
+      state.milestonesHit.push(key);
+      setTimeout(()=>showMilestone(m.icon,m.title,m.fact),400);
+    }
+  }
+}
+
+// ── CONFETTI ──────────────────────────────────────────────────────────────────
+function sprayConfetti() {
+  const c=document.getElementById('confettiContainer');
+  const colors=['#e8b86d','#c97b84','#7a9e7e','#7ba7bc','#b5602a','#fad46a','#f5c5c5'];
+  for (let i=0;i<100;i++) {
+    setTimeout(()=>{
+      const p=document.createElement('div'); p.className='confetti-piece';
+      p.style.cssText=`left:${Math.random()*100}vw;background:${colors[Math.floor(Math.random()*colors.length)]};border-radius:${Math.random()>.5?'50%':'2px'};width:${8+Math.random()*8}px;height:${8+Math.random()*8}px;animation-duration:${2+Math.random()*3}s`;
+      c.appendChild(p); setTimeout(()=>p.remove(),5500);
+    },i*20);
+  }
+}
+
+// ── TOAST ─────────────────────────────────────────────────────────────────────
+function showToast(title,sub) {
+  const c=document.getElementById('toastContainer');
+  const t=document.createElement('div'); t.className='toast';
+  t.innerHTML=`<div class="toast-title">${title}</div>${sub?`<div class="toast-sub">${sub}</div>`:''}`;
+  c.appendChild(t); setTimeout(()=>t.remove(),4200);
+}
+
+// ── GET/SET DAY DATA ──────────────────────────────────────────────────────────
+function getDayData(ds) {
+  if (!state.days[ds]) state.days[ds]={text:'',peakWords:0,completedPages:0,pagesCarried:0};
+  return state.days[ds];
+}
+
+// ── SAVE ──────────────────────────────────────────────────────────────────────
+async function save(auto) {
+  if (viewingDate&&viewingDate!==todayStr) return;
+  const text=document.getElementById('journalTextarea').value;
+  const data=getDayData(todayStr);
+  data.text=text;
+  data.peakWords=Math.max(data.peakWords||0,sessionPeakWords);
+
+  let total=0;
+  for (const d in state.days) total+=(state.days[d].peakWords||0);
+  state.lifetimeWords=total;
+  checkWordMilestones(state.lifetimeWords);
+
+  await saveEntry(todayStr,data);
+  await saveSettings();
+
+  const ts=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  document.getElementById('saveStatus').textContent=auto?`saved ${ts}`:`✦ saved ${ts}`;
+}
+
+function manualSave() { save(false); }
+
+// Debounced autosave — queues a save 3s after last keystroke, avoids hammering Supabase
+function scheduleAutosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer=setTimeout(()=>save(true),AUTOSAVE_MS);
+}
+
+// ── CARRY FORWARD ─────────────────────────────────────────────────────────────
+async function checkCarryForward() {
+  const yd=addDays(todayStr,-1), data=state.days[yd];
+  if (!data) return;
+  const needed=PAGES_GOAL+(data.pagesCarried||0);
+  if ((data.completedPages||0)<needed) {
+    const missed=needed-(data.completedPages||0);
+    const td=getDayData(todayStr);
+    if ((td.pagesCarried||0)!==missed) {
+      td.pagesCarried=(td.pagesCarried||0)+missed;
+      await saveEntry(todayStr,td);
+    }
+  }
+}
+
+// ── TIMER ─────────────────────────────────────────────────────────────────────
+function startTimer() {
+  if (timerInterval) return;
+  timerInterval=setInterval(()=>{
+    timerSeconds++;
+    document.getElementById('timerDisplay').textContent=formatTime(timerSeconds);
+    if (lastTypedTime!==null&&Date.now()-lastTypedTime>PAUSE_THRESHOLD&&!isPaused) {
+      isPaused=true; document.getElementById('pauseIndicator').classList.add('visible');
+    }
+  },1000);
+}
+function resetPauseTimer() {
+  lastTypedTime=Date.now();
+  if (isPaused) { isPaused=false; document.getElementById('pauseIndicator').classList.remove('visible'); }
+}
+function toggleTimer() { timerVisible=!timerVisible; document.getElementById('timerDisplay').classList.toggle('hidden',!timerVisible); }
+
+// ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+function scheduleNotifications() {
+  notifTimeouts.forEach(clearTimeout); notifTimeouts=[];
+  if (!notificationsEnabled||Notification.permission!=='granted') return;
+  NOTIF_MINUTES.forEach(min=>{ notifTimeouts.push(setTimeout(()=>{ new Notification('Morning Pages',{body:`${min} minutes of writing — keep going! ✦`}); },min*60000)); });
+}
+function dismissNotifPrompt() { const p=document.getElementById('notifPrompt'); p.classList.add('hidden'); setTimeout(()=>{p.style.display='none';},450); }
+function requestNotifications() {
+  if (!('Notification' in window)) return;
+  Notification.requestPermission().then(p=>{ dismissNotifPrompt(); if (p==='granted') { notificationsEnabled=true; showToast('Notifications on',"You'll hear from me at 10, 15, and 30 minutes."); scheduleNotifications(); } });
+}
+
+// ── INFO PANEL ────────────────────────────────────────────────────────────────
+function toggleInfo() { document.getElementById('infoPanel').classList.toggle('show'); }
+document.addEventListener('click',e=>{
+  const panel=document.getElementById('infoPanel'), btn=document.querySelector('.info-btn');
+  if (panel.classList.contains('show')&&!panel.contains(e.target)&&!btn.contains(e.target)) panel.classList.remove('show');
+});
+
+// ── INPUT HANDLER ─────────────────────────────────────────────────────────────
+document.getElementById('journalTextarea').addEventListener('input', function() {
+  if (viewingDate&&viewingDate!==todayStr) return;
+  if (!sessionStarted) { sessionStarted=true; startTimer(); scheduleNotifications(); }
+  resetPauseTimer();
+
+  const raw=countWords(this.value);
+  if (raw>sessionPeakWords) { sessionPeakWords=raw; displayedWords=raw; }
+  updateWordDisplay();
+
+  const pages=Math.floor(displayedWords/WORDS_PER_PAGE);
+  const todayData=getDayData(todayStr);
+  const totalNeeded=PAGES_GOAL+(todayData.pagesCarried||0);
+
+  if (pages>=PAGES_GOAL&&!completionReached) {
+    completionReached=true;
+    if (!state.streaks.repairMode) { sprayConfetti(); confettiDone=true; }
+    showToast('Three pages! ✦','Your morning pages are complete for today.');
+    document.getElementById('completionTime').textContent=`completed in ${formatTime(timerSeconds)}`;
+    if ((todayData.completedPages||0)<totalNeeded) markDayComplete();
+    setTimeout(()=>checkRepairEligibility(),1800);
+  }
+
+  if (state.streaks.repairMode&&displayedWords>=DOUBLE_GOAL&&!doubleReached) {
+    doubleReached=true; handleDoubleDay();
+  }
+
+  // Auto-resize (no scroll jitter — textarea grows naturally, page scrolls normally)
+  this.style.height='auto';
+  this.style.height=Math.max(480,this.scrollHeight)+'px';
+
+  scheduleAutosave();
+});
+
+// ── MIDNIGHT ROLLOVER ─────────────────────────────────────────────────────────
+setInterval(async ()=>{
+  const nt=computeToday(), nts=dateStr(nt);
+  if (nts!==todayStr) {
+    today=nt; todayStr=nts; viewingDate=null;
+    await checkCarryForward(); detectStreakBreak();
+    renderCalendar(); renderStreaks();
+    document.getElementById('journalDate').textContent=today.toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+    getDayData(todayStr);
+    sessionPeakWords=0; displayedWords=0; completionReached=false; confettiDone=false; doubleReached=false;
+    document.getElementById('journalTextarea').value='';
+    document.getElementById('readonlyBadge').classList.remove('visible');
+    document.getElementById('dayNav').classList.remove('visible');
+    rebuildStack(0,false); updateWordDisplay();
+  }
+},60000);
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+async function init() {
+  // Auth gate
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { window.location.href='index.html'; return; }
+  currentUser=session.user;
+  document.getElementById('userEmail').textContent=currentUser.email;
+
+  // Load data from Supabase
+  await Promise.all([loadAllEntries(), loadSettings()]);
+
+  today=computeToday(); todayStr=dateStr(today);
+  await checkCarryForward();
+  detectStreakBreak();
+
+  document.getElementById('journalDate').textContent=today.toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  document.getElementById('dayStartTime').value=state.dayStartTime||'00:00';
+
+  renderCalendar(); renderStreaks(); updateRepairBanner();
+
+  const data=getDayData(todayStr);
+  document.getElementById('journalTextarea').value=data.text||'';
+  sessionPeakWords=data.peakWords||0;
+  displayedWords=sessionPeakWords;
+  completionReached=(data.completedPages||0)>=PAGES_GOAL;
+  if (completionReached) confettiDone=true;
+
+  rebuildStack(displayedWords,false);
+  updateWordDisplay();
+
+  const ta=document.getElementById('journalTextarea');
+  ta.style.height='auto';
+  ta.style.height=Math.max(480,ta.scrollHeight)+'px';
+
+  // Notification prompt
+  if ('Notification' in window&&Notification.permission==='default') {
+    const p=document.getElementById('notifPrompt');
+    p.style.display='flex'; setTimeout(()=>p.classList.remove('hidden'),1200);
+  }
+
+  window.addEventListener('resize',updateProgress);
+  setTimeout(updateProgress,100);
+
+  // Fade out loading screen
+  const ls=document.getElementById('loadingScreen');
+  ls.classList.add('hidden');
+  setTimeout(()=>ls.style.display='none',500);
+}
+
+init();
+</script>
+</body>
+</html>
