@@ -229,7 +229,7 @@
       linear-gradient(to right, #f5c5c5 0px, #f5c5c5 1px, transparent 1px, transparent 55px, rgba(166,146,104,0.1) 55px, rgba(166,146,104,0.1) 56px);
   }
   .journal-textarea {
-    width: 100%; min-height: 480px; overflow-y: auto; background: transparent;
+    width: 100%; min-height: 480px; background: transparent;
     border: none; outline: none; resize: none;
     font-family: 'Lora', serif; font-size: 17px; line-height: 28px;
     color: var(--ink); caret-color: var(--accent); overflow: hidden;
@@ -695,13 +695,20 @@ function computeToday() {
 
 // ── SUPABASE DATA LAYER ───────────────────────────────────────────────────────
 async function loadAllEntries() {
+  if (!currentUser) return;
   const { data, error } = await sb.from('entries')
     .select('*')
-    .eq('user_id', currentUser.id);
-  if (error) { console.error('loadAllEntries', error); return; }
+    .eq('user_id', currentUser.id)
+    .order('date', { ascending: false });
+  if (error) {
+    console.error('loadAllEntries error:', JSON.stringify(error));
+    return;
+  }
   state.days = {};
-  for (const row of data) {
-    state.days[row.date] = {
+  for (const row of (data || [])) {
+    // Supabase date columns return YYYY-MM-DD strings — use directly
+    const ds = typeof row.date === 'string' ? row.date.slice(0,10) : row.date;
+    state.days[ds] = {
       text: row.text || '',
       peakWords: row.peak_words || 0,
       completedPages: row.completed_pages || 0,
@@ -710,6 +717,7 @@ async function loadAllEntries() {
       completedAt: row.completed_at || null,
     };
   }
+  console.log('Loaded', Object.keys(state.days).length, 'entries from Supabase');
 }
 
 async function loadSettings() {
@@ -732,7 +740,8 @@ async function loadSettings() {
 }
 
 async function saveEntry(ds, dayData) {
-  const { error } = await sb.from('entries').upsert({
+  if (!currentUser) return;
+  const payload = {
     user_id: currentUser.id,
     date: ds,
     text: dayData.text || '',
@@ -741,13 +750,35 @@ async function saveEntry(ds, dayData) {
     pages_carried: dayData.pagesCarried || 0,
     is_owl: dayData.isOwl || false,
     completed_at: dayData.completedAt || null,
-  }, { onConflict: 'user_id,date' });
-  if (error) console.error('saveEntry', error);
+  };
+
+  // Check if row exists first, then insert or update
+  const { data: existing } = await sb.from('entries')
+    .select('id')
+    .eq('user_id', currentUser.id)
+    .eq('date', ds)
+    .maybeSingle();
+
+  let error;
+  if (existing) {
+    ({ error } = await sb.from('entries')
+      .update(payload)
+      .eq('user_id', currentUser.id)
+      .eq('date', ds));
+  } else {
+    ({ error } = await sb.from('entries').insert(payload));
+  }
+
+  if (error) {
+    console.error('saveEntry error:', JSON.stringify(error));
+    document.getElementById('saveStatus').textContent = '⚠ save failed — ' + (error.message || 'check connection');
+  }
 }
 
 async function saveSettings() {
+  if (!currentUser) return;
   const sd = state.streaks;
-  const { error } = await sb.from('user_settings').upsert({
+  const payload = {
     user_id: currentUser.id,
     day_start_time: state.dayStartTime,
     lifetime_words: state.lifetimeWords,
@@ -760,8 +791,23 @@ async function saveSettings() {
     streak_double_days: sd.doubleDaysCompleted,
     streak_bonus_days: sd.bonusStreakDays,
     streak_window_expires: sd.windowExpires,
-  }, { onConflict: 'user_id' });
-  if (error) console.error('saveSettings', error);
+  };
+
+  const { data: existing } = await sb.from('user_settings')
+    .select('user_id')
+    .eq('user_id', currentUser.id)
+    .maybeSingle();
+
+  let error;
+  if (existing) {
+    ({ error } = await sb.from('user_settings')
+      .update(payload)
+      .eq('user_id', currentUser.id));
+  } else {
+    ({ error } = await sb.from('user_settings').insert(payload));
+  }
+
+  if (error) console.error('saveSettings error:', JSON.stringify(error));
 }
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────
@@ -920,8 +966,11 @@ function renderViewingDay() {
   document.getElementById('viewingDateLabel').textContent=d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
 
   const prevDs=addDays(ds,-1), nextDs=addDays(ds,1);
-  document.getElementById('prevDayBtn').disabled=!state.days[prevDs]?.text;
-  document.getElementById('nextDayBtn').disabled=parseDateStr(nextDs)>parseDateStr(todayStr);
+  // Allow navigating to any day that has been written OR is within the current month
+  const prevInMonth = parseDateStr(prevDs).getMonth()===today.getMonth() && parseDateStr(prevDs).getFullYear()===today.getFullYear();
+  const hasWrittenDays = Object.keys(state.days).some(d => parseDateStr(d) < parseDateStr(ds) && state.days[d].text);
+  document.getElementById('prevDayBtn').disabled = !(prevInMonth || hasWrittenDays);
+  document.getElementById('nextDayBtn').disabled = parseDateStr(nextDs)>parseDateStr(todayStr);
 
   if (locked) {
     displayedWords=data.peakWords||0;
@@ -1175,6 +1224,7 @@ function getDayData(ds) {
 
 // ── SAVE ──────────────────────────────────────────────────────────────────────
 async function save(auto) {
+  if (!currentUser) return;
   if (viewingDate&&viewingDate!==todayStr) return;
   const text=document.getElementById('journalTextarea').value;
   const data=getDayData(todayStr);
@@ -1190,7 +1240,9 @@ async function save(auto) {
   await saveSettings();
 
   const ts=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
-  document.getElementById('saveStatus').textContent=auto?`saved ${ts}`:`✦ saved ${ts}`;
+  if (document.getElementById('saveStatus').textContent.indexOf('⚠')===-1) {
+    document.getElementById('saveStatus').textContent=auto?`saved ${ts}`:`✦ saved ${ts}`;
+  }
 }
 
 function manualSave() { save(false); }
@@ -1311,8 +1363,13 @@ async function init() {
   currentUser=session.user;
   document.getElementById('userEmail').textContent=currentUser.email;
 
-  // Load data from Supabase
-  await Promise.all([loadAllEntries(), loadSettings()]);
+  // Test connection and load data from Supabase
+  try {
+    await Promise.all([loadAllEntries(), loadSettings()]);
+  } catch(e) {
+    console.error('Data load failed:', e);
+    document.getElementById('saveStatus').textContent = '⚠ could not reach database';
+  }
 
   today=computeToday(); todayStr=dateStr(today);
   await checkCarryForward();
