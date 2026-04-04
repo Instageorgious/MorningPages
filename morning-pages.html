@@ -1429,6 +1429,66 @@ function starCurrentEntry(e) {
   window.location.href = 'dashboard.html?star=' + viewingDate;
 }
 
+// ── DEBUG (callable from browser console: mpDebug()) ─────────────────────────
+window.mpDebug = async function() {
+  console.log('=== Morning Pages Debug ===');
+  console.log('currentUser:', currentUser?.id || 'NOT SET');
+  console.log('todayStr:', todayStr);
+  console.log('state.days keys:', Object.keys(state.days));
+
+  if (!currentUser) { console.error('currentUser is null — init failed'); return; }
+
+  // Test 1: can we read from entries?
+  console.log('--- Test 1: SELECT from entries ---');
+  const { data: readData, error: readError } = await sb.from('entries')
+    .select('id, date')
+    .eq('user_id', currentUser.id)
+    .limit(5);
+  if (readError) console.error('READ failed:', JSON.stringify(readError));
+  else console.log('READ ok, rows:', readData.length, readData);
+
+  // Test 2: can we insert a test row?
+  console.log('--- Test 2: INSERT a row ---');
+  const testDate = todayStr;
+  const { data: insData, error: insError } = await sb.from('entries').insert({
+    user_id: currentUser.id,
+    date: testDate,
+    text: '__debug_test__',
+    peak_words: 0,
+    completed_pages: 0,
+    pages_carried: 0,
+    is_owl: false,
+  }).select();
+  if (insError) console.error('INSERT failed:', JSON.stringify(insError));
+  else console.log('INSERT ok:', insData);
+
+  // Test 3: can we update it?
+  console.log('--- Test 3: UPDATE that row ---');
+  const { error: updError } = await sb.from('entries')
+    .update({ text: '__debug_updated__', peak_words: 1 })
+    .eq('user_id', currentUser.id)
+    .eq('date', testDate);
+  if (updError) console.error('UPDATE failed:', JSON.stringify(updError));
+  else console.log('UPDATE ok');
+
+  // Test 4: clean up test row (only if it was a test)
+  const { data: checkRow } = await sb.from('entries')
+    .select('text')
+    .eq('user_id', currentUser.id)
+    .eq('date', testDate)
+    .maybeSingle();
+  if (checkRow?.text?.startsWith('__debug')) {
+    await sb.from('entries').delete()
+      .eq('user_id', currentUser.id)
+      .eq('date', testDate);
+    console.log('Test row cleaned up');
+  } else {
+    console.log('Real entry exists for today — left untouched');
+  }
+
+  console.log('=== Debug complete ===');
+};
+
 init();
 </script>
 </body>
