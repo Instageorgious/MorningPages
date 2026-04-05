@@ -599,6 +599,7 @@ async function analyzeEntry() {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`,
+          'apikey': SUPABASE_KEY,
         },
         body: JSON.stringify({
           text: entry.text,
