@@ -15,6 +15,7 @@
     /* emotion palette */
     --joy: #f5c842; --anger: #e05c3a; --sadness: #5b8fc9;
     --fear: #9b72c8; --disgust: #6aab6a; --eros: #d4607a;
+    --rigidity: #888880; --curiosity: #3dd6c8; --gratitude: #f0f0ee;
   }
 
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -174,6 +175,57 @@
   .viz-meta {
     display:flex; gap:16px; flex-wrap:wrap; margin-top:12px;
     font-family:'Caveat',cursive; font-size:14px; color:var(--ink-light);
+  }
+
+  /* Phrase highlights */
+  .phrase-chips {
+    display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; min-height:0;
+  }
+  .phrase-chip {
+    font-family:'Caveat',cursive; font-size:13px;
+    border-radius:4px; padding:3px 10px; cursor:default;
+    transition: transform 0.15s; white-space: nowrap;
+  }
+  .phrase-chip:hover { transform: scale(1.04); }
+
+  /* Word web canvas */
+  .word-web-wrap {
+    position:relative; width:100%; height:220px;
+    background:transparent; margin-top:8px; overflow:hidden;
+  }
+  .word-web-wrap canvas { position:absolute; inset:0; }
+
+  /* Valence bars */
+  .valence-bars { margin-top:14px; display:flex; flex-direction:column; gap:7px; }
+  .valence-row {
+    display:flex; align-items:center; gap:10px;
+    font-family:'Caveat',cursive; font-size:13px; color:var(--ink-light);
+  }
+  .valence-label { width:72px; text-align:right; flex-shrink:0; }
+  .valence-track {
+    flex:1; height:10px; background:var(--parchment-mid);
+    border-radius:5px; overflow:hidden;
+  }
+  .valence-fill {
+    height:100%; border-radius:5px; width:0;
+    transition: width 0.9s cubic-bezier(0.34,1.2,0.64,1);
+  }
+  .valence-pct { width:32px; font-size:12px; color:var(--ink-faint); }
+
+  /* Entry display */
+  .entry-display {
+    margin-top:20px; padding-top:16px;
+    border-top:1px solid var(--parchment-mid);
+    display:none;
+  }
+  .entry-display.visible { display:block; }
+  .entry-display-label {
+    font-family:'Caveat',cursive; font-size:12px; color:var(--ink-faint);
+    letter-spacing:0.1em; text-transform:uppercase; margin-bottom:10px;
+  }
+  .entry-display-text {
+    font-family:'Lora',serif; font-size:15px; line-height:1.75;
+    color:var(--ink-light); white-space:pre-wrap; word-break:break-word;
   }
   .viz-meta-item { display:flex; align-items:center; gap:5px; }
   .rating-badge {
@@ -344,11 +396,32 @@
       <button class="analyze-btn" id="analyzeBtn" onclick="analyzeEntry()" disabled>ai analyze ✦</button>
       <button class="analyze-btn" id="analyzeLocalBtn" onclick="analyzeLocal()" disabled style="background:var(--parchment-warm);color:var(--ink-light);border:1px solid var(--parchment-deep);">local analyze</button>
     </div>
+    <div class="phrase-chips" id="phraseChips"></div>
     <div class="viz-canvas" id="vizCanvas">
       <div class="viz-placeholder" id="vizPlaceholder">select an entry and analyze to see its emotional landscape</div>
       <div class="analysis-loading" id="analysisLoading">
         <div class="analysis-spinner"></div>
         <div class="analysis-loading-text">reading between the lines…</div>
+      </div>
+    </div>
+    <div class="word-web-wrap" id="wordWebWrap" style="display:none">
+      <canvas id="wordWebCanvas"></canvas>
+    </div>
+    <div class="valence-bars" id="valenceBars" style="display:none">
+      <div class="valence-row">
+        <div class="valence-label">positive</div>
+        <div class="valence-track"><div class="valence-fill" id="vPos" style="background:#6aab6a"></div></div>
+        <div class="valence-pct" id="vPosN">0%</div>
+      </div>
+      <div class="valence-row">
+        <div class="valence-label">negative</div>
+        <div class="valence-track"><div class="valence-fill" id="vNeg" style="background:#e05c3a"></div></div>
+        <div class="valence-pct" id="vNegN">0%</div>
+      </div>
+      <div class="valence-row">
+        <div class="valence-label">neutral</div>
+        <div class="valence-track"><div class="valence-fill" id="vNeu" style="background:#b8a98a"></div></div>
+        <div class="valence-pct" id="vNeuN">0%</div>
       </div>
     </div>
     <div class="emotion-legend" id="emotionLegend" style="display:none">
@@ -358,8 +431,15 @@
       <div class="legend-item"><div class="legend-dot" style="background:var(--fear)"></div>fear</div>
       <div class="legend-item"><div class="legend-dot" style="background:var(--disgust)"></div>disgust</div>
       <div class="legend-item"><div class="legend-dot" style="background:var(--eros)"></div>eros</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--rigidity)"></div>rigidity</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--curiosity)"></div>curiosity</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--gratitude);border:1px solid var(--parchment-deep)"></div>gratitude</div>
     </div>
     <div class="viz-meta" id="vizMeta"></div>
+    <div class="entry-display" id="entryDisplay">
+      <div class="entry-display-label">entry</div>
+      <div class="entry-display-text" id="entryDisplayText"></div>
+    </div>
   </div>
 
   <!-- ── DOWNLOAD ── -->
@@ -389,13 +469,20 @@ let currentUser = null;
 
 // ── EMOTION CONFIG ────────────────────────────────────────────────────────────
 const EMOTIONS = [
-  { key:'joy',     label:'joy',     color:'#f5c842', textColor:'#7a6010' },
-  { key:'anger',   label:'anger',   color:'#e05c3a', textColor:'white' },
-  { key:'sadness', label:'sadness', color:'#5b8fc9', textColor:'white' },
-  { key:'fear',    label:'fear',    color:'#9b72c8', textColor:'white' },
-  { key:'disgust', label:'disgust', color:'#6aab6a', textColor:'white' },
-  { key:'eros',    label:'eros',    color:'#d4607a', textColor:'white' },
+  { key:'joy',       label:'joy',       color:'#f5c842', textColor:'#7a6010' },
+  { key:'anger',     label:'anger',     color:'#e05c3a', textColor:'white' },
+  { key:'sadness',   label:'sadness',   color:'#5b8fc9', textColor:'white' },
+  { key:'fear',      label:'fear',      color:'#9b72c8', textColor:'white' },
+  { key:'disgust',   label:'disgust',   color:'#6aab6a', textColor:'white' },
+  { key:'eros',      label:'eros',      color:'#d4607a', textColor:'white' },
+  { key:'rigidity',  label:'rigidity',  color:'#888880', textColor:'white' },
+  { key:'curiosity', label:'curiosity', color:'#3dd6c8', textColor:'#1a6b65' },
+  { key:'gratitude', label:'gratitude', color:'#f0f0ee', textColor:'#6b5c42' },
 ];
+
+// Build a lookup map for fast access
+const EMOTION_MAP = {};
+EMOTIONS.forEach(e => { EMOTION_MAP[e.key] = e; });
 
 const RATINGS = [
   { key:'E',  label:'E — Everyone',        class:'rating-E' },
@@ -710,89 +797,245 @@ function localScore(text) {
 }
 
 function renderViz(result, entry, ds) {
-  const canvas = document.getElementById('vizCanvas');
-  // Clear existing orbs but keep overlay elements
-  canvas.querySelectorAll('.orb').forEach(o=>o.remove());
+  const canvas    = document.getElementById('vizCanvas');
+  const emotions  = result.emotions  || {};
+  const valence   = result.valence   || {};
+  const phrases   = result.phraseHighlights || [];
+  const topWords  = result.topWords  || [];
+
+  // ── Clear previous state ──────────────────────────────────────────────────
+  canvas.querySelectorAll('.orb').forEach(o => o.remove());
+  document.getElementById('phraseChips').innerHTML = '';
+  document.getElementById('vizMeta').innerHTML = '';
+  document.getElementById('emotionLegend').style.display = 'none';
+  document.getElementById('wordWebWrap').style.display = 'none';
+  document.getElementById('valenceBars').style.display = 'none';
+  document.getElementById('entryDisplay').classList.remove('visible');
+  stopWordWeb();
 
   const canvasW = canvas.offsetWidth;
-  const canvasH = Math.max(280, canvas.offsetHeight);
-  canvas.style.minHeight = '280px';
+  const canvasH = 300;
+  canvas.style.minHeight = canvasH + 'px';
 
-  const emotions = result.emotions || {};
-  const total = Object.values(emotions).reduce((s,v)=>s+(v||0),0)||1;
+  const tempoSpeed  = {slow:14, moderate:8, fast:4}[result.tempo] || 8;
+  const orbOpacity  = {focused:1, 'some pauses':0.82, fragmented:0.62}[result.distractionLevel] || 1;
 
-  // Speed multiplier from tempo: fast=vigorous drift, slow=gentle
-  const tempoSpeed = {slow:12,moderate:7,fast:4}[result.tempo]||7;
-  // Distraction → opacity of orbs (fragmented = slightly faded)
-  const orbOpacity = {focused:1,'some pauses':0.82,fragmented:0.65}[result.distractionLevel]||1;
+  const total = Object.values(emotions).reduce((s,v) => s+(v||0), 0) || 1;
 
-  const emotionMap = {};
-  EMOTIONS.forEach(e=>{ emotionMap[e.key]=e; });
-
-  // Sort by value desc to place biggest orbs first
+  // ── Orbs ──────────────────────────────────────────────────────────────────
   const sorted = EMOTIONS
-    .map(e=>({...e, value:emotions[e.key]||0}))
-    .filter(e=>e.value>3)
-    .sort((a,b)=>b.value-a.value);
+    .map(e => ({...e, value: emotions[e.key] || 0}))
+    .filter(e => e.value > 3)
+    .sort((a,b) => b.value - a.value);
 
-  // Arrange orbs — simple physics-ish placement spreading from center
-  const cx=canvasW/2, cy=canvasH/2;
-  const angleStep = (2*Math.PI)/Math.max(sorted.length,1);
+  const cx = canvasW/2, cy = canvasH/2;
+  const angleStep = (2*Math.PI) / Math.max(sorted.length, 1);
 
-  sorted.forEach((em,i)=>{
-    const pct = em.value/total;
-    const size = Math.max(44, Math.min(110, pct*280));
-    const spread = canvasW*0.28;
-    const angle = i*angleStep - Math.PI/2;
-    // Biggest orb near center, others spread outward
-    const dist = i===0 ? 0 : spread*(0.5+i*0.18);
+  sorted.forEach((em, i) => {
+    const pct  = em.value / total;
+    const size = Math.max(40, Math.min(100, pct * 260));
+    const spread = canvasW * 0.30;
+    const angle  = i * angleStep - Math.PI/2;
+    const dist   = i === 0 ? 0 : spread * (0.45 + i * 0.16);
     const x = Math.max(size/2+4, Math.min(canvasW-size/2-4, cx + Math.cos(angle)*dist));
     const y = Math.max(size/2+4, Math.min(canvasH-size/2-4, cy + Math.sin(angle)*dist));
 
     const orb = document.createElement('div');
-    orb.className='orb';
-    orb.style.cssText=`
+    orb.className = 'orb';
+    // Gratitude gets a border so the white orb is visible
+    const extraStyle = em.key === 'gratitude' ? 'border:1px solid var(--parchment-deep);' : '';
+    orb.style.cssText = `
       width:${size}px; height:${size}px;
       background:${em.color};
       left:${x-size/2}px; top:${y-size/2}px;
       opacity:${orbOpacity};
-      animation: orb-drift ${tempoSpeed+i*1.3}s ease-in-out infinite alternate,
-                 orb-pulse ${3+i*0.7}s ease-in-out infinite;
-      box-shadow:0 4px 20px ${em.color}55;
+      ${extraStyle}
+      animation: orb-drift ${tempoSpeed+i*1.4}s ease-in-out ${i*0.3}s infinite alternate,
+                 orb-pulse ${3.5+i*0.8}s ease-in-out infinite;
+      box-shadow:0 4px 22px ${em.color}66;
     `;
-    orb.innerHTML=`
+    orb.innerHTML = `
       <span class="orb-label" style="color:${em.textColor}">${em.label}</span>
-      <span class="orb-pct" style="color:${em.textColor}">${Math.round(em.value)}%</span>`;
+      <span class="orb-pct"   style="color:${em.textColor}">${Math.round(em.value)}%</span>`;
     canvas.appendChild(orb);
   });
 
-  // Metadata row
-  const rating = RATINGS.find(r=>r.key===result.rating)||RATINGS[0];
-  const themes = (result.dominantThemes||[]).slice(0,3).join(' · ');
+  // ── Phrase chips ──────────────────────────────────────────────────────────
+  const chipEl = document.getElementById('phraseChips');
+  if (phrases.length > 0) {
+    // Show 2 from each of top 3 emotions
+    const top3 = sorted.slice(0,3).map(e => e.key);
+    const shown = new Set();
+    for (const key of top3) {
+      const matches = phrases.filter(p => p.emotion === key && !shown.has(p.phrase)).slice(0,2);
+      for (const p of matches) {
+        shown.add(p.phrase);
+        const em = EMOTION_MAP[key] || {color:'#ccc', textColor:'var(--ink)'};
+        const chip = document.createElement('div');
+        chip.className = 'phrase-chip';
+        chip.title = key;
+        chip.style.cssText = `background:${em.color}22; color:${em.textColor === 'white' ? em.color : em.textColor}; border:1px solid ${em.color}55;`;
+        chip.textContent = '“' + p.phrase + '”';
+        chipEl.appendChild(chip);
+      }
+    }
+  }
+
+  // ── Valence bars ──────────────────────────────────────────────────────────
+  if (valence.positivity !== undefined || valence.negativity !== undefined) {
+    document.getElementById('valenceBars').style.display = 'flex';
+    const pos = valence.positivity || 0;
+    const neg = valence.negativity || 0;
+    const neu = valence.neutrality || 0;
+    // Animate after paint
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        document.getElementById('vPos').style.width = pos + '%';
+        document.getElementById('vNeg').style.width = neg + '%';
+        document.getElementById('vNeu').style.width = neu + '%';
+        document.getElementById('vPosN').textContent = pos + '%';
+        document.getElementById('vNegN').textContent = neg + '%';
+        document.getElementById('vNeuN').textContent = neu + '%';
+      }, 80);
+    });
+  }
+
+  // ── Word web ──────────────────────────────────────────────────────────────
+  if (topWords.length > 0) {
+    document.getElementById('wordWebWrap').style.display = 'block';
+    startWordWeb(topWords, tempoSpeed);
+  }
+
+  // ── Legend ────────────────────────────────────────────────────────────────
+  document.getElementById('emotionLegend').style.display = 'flex';
+
+  // ── Meta row ──────────────────────────────────────────────────────────────
+  const rating    = RATINGS.find(r => r.key === result.rating) || RATINGS[0];
+  const themes    = (result.dominantThemes || []).slice(0,3).join(' · ');
   const sourceTag = result.isLocal
     ? '<span style="font-family:Caveat,cursive;font-size:12px;color:var(--ink-faint);border:1px solid var(--parchment-deep);border-radius:4px;padding:1px 6px">local</span>'
     : '<span style="font-family:Caveat,cursive;font-size:12px;color:var(--accent);border:1px solid var(--dawn);border-radius:4px;padding:1px 6px">ai ✦</span>';
   const meta = document.getElementById('vizMeta');
-  meta.innerHTML=`
+  meta.innerHTML = `
     <div class="viz-meta-item">${sourceTag}</div>
     <div class="viz-meta-item"><span class="rating-badge ${rating.class}">${rating.key}</span> ${rating.label}</div>
-    <div class="viz-meta-item">⚡ ${result.tempo||'—'}</div>
-    <div class="viz-meta-item">☕ ${result.distractionLevel||'—'}</div>
-    ${themes?`<div class="viz-meta-item" style="width:100%;opacity:0.75;font-size:13px">${themes}</div>`:''}`;
+    <div class="viz-meta-item">⚡ ${result.tempo || '—'}</div>
+    <div class="viz-meta-item">☕ ${result.distractionLevel || '—'}</div>
+    ${themes ? `<div class="viz-meta-item" style="width:100%;opacity:0.75;font-size:13px">${themes}</div>` : ''}`;
 
-  document.getElementById('emotionLegend').style.display='flex';
-
-  // Star button in viz meta
-  const starDiv=document.createElement('div');
-  starDiv.className='viz-meta-item';
-  starDiv.style.marginLeft='auto';
-  const isStarred=starredDates.includes(ds);
-  const starBtn=document.createElement('button');
-  starBtn.style.cssText='font-family:Caveat,cursive;font-size:13px;background:none;border:none;cursor:pointer;color:var(--ink-faint);padding:0;';
-  starBtn.textContent=isStarred?'✦ starred':'✦ star this entry';
-  starBtn.onclick=()=>{ toggleStar(ds); starBtn.textContent=starredDates.includes(ds)?'✦ starred':'✦ star this entry'; };
+  // Star button
+  const starDiv = document.createElement('div');
+  starDiv.className = 'viz-meta-item';
+  starDiv.style.marginLeft = 'auto';
+  const isStarred = starredDates.includes(ds);
+  const starBtn = document.createElement('button');
+  starBtn.style.cssText = 'font-family:Caveat,cursive;font-size:13px;background:none;border:none;cursor:pointer;color:var(--ink-faint);padding:0;';
+  starBtn.textContent = isStarred ? '✦ starred' : '✦ star this entry';
+  starBtn.onclick = () => { toggleStar(ds); starBtn.textContent = starredDates.includes(ds) ? '✦ starred' : '✦ star this entry'; };
   starDiv.appendChild(starBtn);
   meta.appendChild(starDiv);
+
+  // ── Entry text display ────────────────────────────────────────────────────
+  const entryDisplay = document.getElementById('entryDisplay');
+  const entryText    = document.getElementById('entryDisplayText');
+  entryDisplay.classList.add('visible');
+  entryText.textContent = entry.text || '';
+}
+
+// ── WORD WEB (animated canvas) ────────────────────────────────────────────────
+let wordWebRAF = null;
+
+function stopWordWeb() {
+  if (wordWebRAF) { cancelAnimationFrame(wordWebRAF); wordWebRAF = null; }
+}
+
+function startWordWeb(words, tempoSpeed) {
+  const wrap   = document.getElementById('wordWebWrap');
+  const canvas = document.getElementById('wordWebCanvas');
+  const W = wrap.offsetWidth;
+  const H = 220;
+  canvas.width  = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  // Build nodes
+  const nodes = words.map((w, i) => {
+    const em   = EMOTION_MAP[w.emotion] || { color: '#b8a98a' };
+    const size = 11 + (w.weight / 100) * 14;
+    // Seed positions in loose clusters around a circle
+    const angle = (i / words.length) * 2 * Math.PI;
+    const r     = 60 + Math.random() * 50;
+    return {
+      word:  w.word,
+      color: em.color,
+      size,
+      x: W/2 + Math.cos(angle)*r + (Math.random()-0.5)*30,
+      y: H/2 + Math.sin(angle)*r + (Math.random()-0.5)*30,
+      vx: (Math.random()-0.5) * 0.4,
+      vy: (Math.random()-0.5) * 0.4,
+      // Unique drift phase
+      phase: Math.random() * Math.PI * 2,
+      driftSpeed: 0.3 + Math.random() * 0.4,
+      driftR: 4 + Math.random() * 12,
+    };
+  });
+
+  let t = 0;
+  const speedMult = 1 / (tempoSpeed || 8); // faster tempo = more movement
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    t += 0.012 * (1 + speedMult * 2);
+
+    // Draw connections between same-emotion nodes
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i+1; j < nodes.length; j++) {
+        if (nodes[i].color !== nodes[j].color) continue;
+        const dx = nodes[j].x - nodes[i].x;
+        const dy = nodes[j].y - nodes[i].y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist > 150) continue;
+        const alpha = (1 - dist/150) * 0.25;
+        ctx.beginPath();
+        ctx.strokeStyle = nodes[i].color + Math.round(alpha*255).toString(16).padStart(2,'0');
+        ctx.lineWidth = 1;
+        ctx.moveTo(nodes[i].x, nodes[i].y);
+        ctx.lineTo(nodes[j].x, nodes[j].y);
+        ctx.stroke();
+      }
+    }
+
+    // Update and draw nodes
+    nodes.forEach(n => {
+      // Gentle drift orbit
+      n.x += Math.cos(t * n.driftSpeed + n.phase) * 0.35 * (1 + speedMult);
+      n.y += Math.sin(t * n.driftSpeed * 0.7 + n.phase) * 0.28 * (1 + speedMult);
+
+      // Soft boundary repulsion — keep words inside canvas
+      const pad = n.size + 8;
+      if (n.x < pad)   n.x += (pad - n.x) * 0.06;
+      if (n.x > W-pad) n.x -= (n.x - (W-pad)) * 0.06;
+      if (n.y < pad)   n.y += (pad - n.y) * 0.06;
+      if (n.y > H-pad) n.y -= (n.y - (H-pad)) * 0.06;
+
+      // Gentle center gravity — stop words drifting too far apart
+      n.x += (W/2 - n.x) * 0.002;
+      n.y += (H/2 - n.y) * 0.002;
+
+      // Draw word
+      ctx.font = `${n.size}px 'Caveat', cursive`;
+      ctx.fillStyle = n.color;
+      ctx.globalAlpha = 0.88;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(n.word, n.x, n.y);
+      ctx.globalAlpha = 1;
+    });
+
+    wordWebRAF = requestAnimationFrame(draw);
+  }
+
+  draw();
 }
 
 // ── SHRED ─────────────────────────────────────────────────────────────────────
