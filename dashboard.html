@@ -177,23 +177,25 @@
     font-family:'Caveat',cursive; font-size:14px; color:var(--ink-light);
   }
 
-  /* Phrase highlights */
+  /* Phrase highlights — below canvas */
   .phrase-chips {
-    display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; min-height:0;
+    display:flex; flex-direction:column; gap:8px; margin-top:14px; min-height:0;
   }
   .phrase-chip {
-    font-family:'Caveat',cursive; font-size:13px;
-    border-radius:4px; padding:3px 10px; cursor:default;
-    transition: transform 0.15s; white-space: nowrap;
+    font-family:'Caveat',cursive; font-size:14px;
+    border-radius:6px; padding:6px 14px; cursor:default;
+    transition: transform 0.15s;
+    white-space: normal; line-height:1.5;
+    display:block; width:100%;
   }
-  .phrase-chip:hover { transform: scale(1.04); }
+  .phrase-chip:hover { transform: scale(1.01); }
 
-  /* Word web canvas */
-  .word-web-wrap {
-    position:relative; width:100%; height:220px;
-    background:transparent; margin-top:8px; overflow:hidden;
+  /* Unified orb+word canvas */
+  .unified-canvas-wrap {
+    position:relative; width:100%; background:transparent; overflow:hidden;
+    border-radius:3px;
   }
-  .word-web-wrap canvas { position:absolute; inset:0; }
+  #unifiedCanvas { display:block; width:100%; }
 
   /* Valence bars */
   .valence-bars { margin-top:14px; display:flex; flex-direction:column; gap:7px; }
@@ -208,7 +210,8 @@
   }
   .valence-fill {
     height:100%; border-radius:5px; width:0;
-    transition: width 0.9s cubic-bezier(0.34,1.2,0.64,1);
+    transition: width 0.9s cubic-bezier(0.34,1.2,0.64,1),
+                box-shadow 0.9s ease;
   }
   .valence-pct { width:32px; font-size:12px; color:var(--ink-faint); }
 
@@ -396,16 +399,15 @@
       <button class="analyze-btn" id="analyzeBtn" onclick="analyzeEntry()" disabled>ai analyze ✦</button>
       <button class="analyze-btn" id="analyzeLocalBtn" onclick="analyzeLocal()" disabled style="background:var(--parchment-warm);color:var(--ink-light);border:1px solid var(--parchment-deep);">local analyze</button>
     </div>
-    <div class="phrase-chips" id="phraseChips"></div>
-    <div class="viz-canvas" id="vizCanvas">
+    <div class="viz-canvas" id="vizCanvas" style="min-height:60px">
       <div class="viz-placeholder" id="vizPlaceholder">select an entry and analyze to see its emotional landscape</div>
       <div class="analysis-loading" id="analysisLoading">
         <div class="analysis-spinner"></div>
         <div class="analysis-loading-text">reading between the lines…</div>
       </div>
     </div>
-    <div class="word-web-wrap" id="wordWebWrap" style="display:none">
-      <canvas id="wordWebCanvas"></canvas>
+    <div class="unified-canvas-wrap" id="unifiedCanvasWrap" style="display:none">
+      <canvas id="unifiedCanvas"></canvas>
     </div>
     <div class="valence-bars" id="valenceBars" style="display:none">
       <div class="valence-row">
@@ -424,6 +426,7 @@
         <div class="valence-pct" id="vNeuN">0%</div>
       </div>
     </div>
+    <div class="phrase-chips" id="phraseChips"></div>
     <div class="emotion-legend" id="emotionLegend" style="display:none">
       <div class="legend-item"><div class="legend-dot" style="background:var(--joy)"></div>joy</div>
       <div class="legend-item"><div class="legend-dot" style="background:var(--anger)"></div>anger</div>
@@ -844,113 +847,175 @@ function localScore(text) {
 }
 
 function renderViz(result, entry, ds) {
-  const canvas    = document.getElementById('vizCanvas');
+  const vizCanvas = document.getElementById('vizCanvas');
   const emotions  = result.emotions  || {};
   const valence   = result.valence   || {};
   const phrases   = result.phraseHighlights || [];
   const topWords  = result.topWords  || [];
 
-  // ── Clear previous state ──────────────────────────────────────────────────
-  canvas.querySelectorAll('.orb').forEach(o => o.remove());
-  document.getElementById('phraseChips').innerHTML = '';
+  // Clear
+  vizCanvas.querySelectorAll('.orb').forEach(o => o.remove());
   document.getElementById('vizMeta').innerHTML = '';
   document.getElementById('emotionLegend').style.display = 'none';
-  document.getElementById('wordWebWrap').style.display = 'none';
+  document.getElementById('unifiedCanvasWrap').style.display = 'none';
   document.getElementById('valenceBars').style.display = 'none';
+  document.getElementById('phraseChips').innerHTML = '';
   document.getElementById('entryDisplay').classList.remove('visible');
   stopWordWeb();
 
-  const canvasW = canvas.offsetWidth;
-  const canvasH = 300;
-  canvas.style.minHeight = canvasH + 'px';
+  // Hide placeholder
+  document.getElementById('vizPlaceholder').style.display = 'none';
+  vizCanvas.style.minHeight = '0';
 
-  const tempoSpeed  = {slow:14, moderate:8, fast:4}[result.tempo] || 8;
-  const orbOpacity  = {focused:1, 'some pauses':0.82, fragmented:0.62}[result.distractionLevel] || 1;
+  const tempoSpeed = {slow:14, moderate:8, fast:4}[result.tempo] || 8;
+  const orbOpacity = {focused:1,'some pauses':0.82,fragmented:0.62}[result.distractionLevel] || 1;
+  const total      = Object.values(emotions).reduce((s,v) => s+(v||0), 0) || 1;
 
-  const total = Object.values(emotions).reduce((s,v) => s+(v||0), 0) || 1;
-
-  // ── Orbs ──────────────────────────────────────────────────────────────────
+  // Sort active emotions
   const sorted = EMOTIONS
     .map(e => ({...e, value: emotions[e.key] || 0}))
     .filter(e => e.value > 3)
     .sort((a,b) => b.value - a.value);
 
-  const cx = canvasW/2, cy = canvasH/2;
+  // Build co-occurrence matrix from topWords
+  // Measure: how many words share both emotions across the text
+  const coMatrix = {}; // 'keyA:keyB' -> count
+  if (topWords.length > 1) {
+    for (let i=0; i<topWords.length; i++) {
+      for (let j=i+1; j<topWords.length; j++) {
+        const a = topWords[i].emotion, b = topWords[j].emotion;
+        if (a === b) continue;
+        const key = [a,b].sort().join(':');
+        coMatrix[key] = (coMatrix[key]||0) + 1;
+      }
+    }
+  }
+
+  // Place orbs on unified canvas — positions become orb anchor points
+  const W = document.getElementById('unifiedCanvasWrap').offsetWidth || 600;
+  const H = Math.max(360, W * 0.62);
+  const cx = W/2, cy = H/2;
+
+  // Initial circular layout
+  const orbNodes = {};
   const angleStep = (2*Math.PI) / Math.max(sorted.length, 1);
-
   sorted.forEach((em, i) => {
-    const pct  = em.value / total;
-    const size = Math.max(40, Math.min(100, pct * 260));
-    const spread = canvasW * 0.30;
+    const pct    = em.value / total;
+    const size   = Math.max(52, Math.min(110, pct * 300));
+    const spread = Math.min(W, H) * 0.28;
     const angle  = i * angleStep - Math.PI/2;
-    const dist   = i === 0 ? 0 : spread * (0.45 + i * 0.16);
-    const x = Math.max(size/2+4, Math.min(canvasW-size/2-4, cx + Math.cos(angle)*dist));
-    const y = Math.max(size/2+4, Math.min(canvasH-size/2-4, cy + Math.sin(angle)*dist));
-
-    const orb = document.createElement('div');
-    orb.className = 'orb';
-    // Gratitude gets a border so the white orb is visible
-    const extraStyle = em.key === 'gratitude' ? 'border:1px solid var(--parchment-deep);' : '';
-    orb.style.cssText = `
-      width:${size}px; height:${size}px;
-      background:${em.color};
-      left:${x-size/2}px; top:${y-size/2}px;
-      opacity:${orbOpacity};
-      ${extraStyle}
-      animation: orb-drift ${tempoSpeed+i*1.4}s ease-in-out ${i*0.3}s infinite alternate,
-                 orb-pulse ${3.5+i*0.8}s ease-in-out infinite;
-      box-shadow:0 4px 22px ${em.color}66;
-    `;
-    orb.innerHTML = `
-      <span class="orb-label" style="color:${em.textColor}">${em.label}</span>
-      <span class="orb-pct"   style="color:${em.textColor}">${Math.round(em.value)}%</span>`;
-    canvas.appendChild(orb);
+    const dist   = i === 0 ? 0 : spread * (0.5 + i * 0.14);
+    orbNodes[em.key] = {
+      key:   em.key,
+      color: em.color,
+      textColor: em.textColor,
+      label: em.label,
+      value: em.value,
+      size,
+      // base position (will be nudged by co-occurrence)
+      x: Math.max(size/2+6, Math.min(W-size/2-6, cx + Math.cos(angle)*dist)),
+      y: Math.max(size/2+6, Math.min(H-size/2-6, cy + Math.sin(angle)*dist)),
+    };
   });
 
-  // ── Phrase chips ──────────────────────────────────────────────────────────
+  // Apply co-occurrence nudge: emotions that co-occur a lot drift toward each other
+  const maxCo = Math.max(...Object.values(coMatrix), 1);
+  for (const [pair, count] of Object.entries(coMatrix)) {
+    const [a, b] = pair.split(':');
+    if (!orbNodes[a] || !orbNodes[b]) continue;
+    const pull = (count / maxCo) * 0.12; // max 12% of distance
+    const dx = orbNodes[b].x - orbNodes[a].x;
+    const dy = orbNodes[b].y - orbNodes[a].y;
+    orbNodes[a].x += dx * pull;
+    orbNodes[a].y += dy * pull;
+    orbNodes[b].x -= dx * pull;
+    orbNodes[b].y -= dy * pull;
+  }
+
+  // Re-clamp after nudge
+  for (const n of Object.values(orbNodes)) {
+    n.x = Math.max(n.size/2+6, Math.min(W-n.size/2-6, n.x));
+    n.y = Math.max(n.size/2+6, Math.min(H-n.size/2-6, n.y));
+  }
+
+  // Build word particles — each orbits its home orb
+  const wordNodes = topWords.map((w, i) => {
+    const home = orbNodes[w.emotion];
+    if (!home) return null;
+    // Orbit radius scales with weight — heavier words orbit wider & faster
+    const orbitR     = home.size/2 + 18 + (w.weight/100) * 55;
+    const orbitSpeed = 0.004 + (w.weight/100) * 0.012; // heavier = faster
+    const initAngle  = (i / topWords.length) * 2 * Math.PI;
+    const fontSize   = 10 + (w.weight/100) * 9;
+    const em = EMOTION_MAP[w.emotion] || {color:'#b8a98a'};
+    return {
+      word:       w.word,
+      emotion:    w.emotion,
+      color:      em.color,
+      fontSize,
+      orbitR,
+      orbitSpeed,
+      angle:      initAngle,
+      homeKey:    w.emotion,
+      weight:     w.weight,
+      x:          home.x + Math.cos(initAngle)*orbitR,
+      y:          home.y + Math.sin(initAngle)*orbitR,
+    };
+  }).filter(Boolean);
+
+  // ── Valence bars with glow ────────────────────────────────────────────────
+  if (valence.positivity !== undefined) {
+    document.getElementById('valenceBars').style.display = 'flex';
+    const pos = valence.positivity || 0;
+    const neg = valence.negativity || 0;
+    const neu = valence.neutrality || 0;
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        // Positive: yellow → gold glow
+        const posGlow  = Math.round(pos * 2.2);
+        const posEl    = document.getElementById('vPos');
+        posEl.style.width      = pos + '%';
+        posEl.style.background = '#f5c842';
+        posEl.style.boxShadow  = pos > 10 ? `0 0 ${posGlow}px #c8920088` : 'none';
+        document.getElementById('vPosN').textContent = pos + '%';
+
+        // Negative: deep purple → black glow
+        const negGlow  = Math.round(neg * 2.5);
+        const negEl    = document.getElementById('vNeg');
+        negEl.style.width      = neg + '%';
+        negEl.style.background = '#3d1a5c';
+        negEl.style.boxShadow  = neg > 10 ? `0 0 ${negGlow}px #00000099` : 'none';
+        document.getElementById('vNegN').textContent = neg + '%';
+
+        // Neutral: muted warm gray glow
+        const neuGlow  = Math.round(neu * 1.2);
+        const neuEl    = document.getElementById('vNeu');
+        neuEl.style.width      = neu + '%';
+        neuEl.style.background = '#b8a98a';
+        neuEl.style.boxShadow  = neu > 10 ? `0 0 ${neuGlow}px #b8a98a55` : 'none';
+        document.getElementById('vNeuN').textContent = neu + '%';
+      }, 80);
+    });
+  }
+
+  // ── Phrase chips (full sentences) ─────────────────────────────────────────
   const chipEl = document.getElementById('phraseChips');
   if (phrases.length > 0) {
-    // Show 2 from each of top 3 emotions
     const top3 = sorted.slice(0,3).map(e => e.key);
     const shown = new Set();
     for (const key of top3) {
       const matches = phrases.filter(p => p.emotion === key && !shown.has(p.phrase)).slice(0,2);
       for (const p of matches) {
         shown.add(p.phrase);
-        const em = EMOTION_MAP[key] || {color:'#ccc', textColor:'var(--ink)'};
+        const em = EMOTION_MAP[key] || {color:'#ccc'};
         const chip = document.createElement('div');
         chip.className = 'phrase-chip';
         chip.title = key;
-        chip.style.cssText = `background:${em.color}22; color:${em.textColor === 'white' ? em.color : em.textColor}; border:1px solid ${em.color}55;`;
-        chip.textContent = '“' + p.phrase + '”';
+        chip.style.cssText = `background:${em.color}18; color:${em.textColor === 'white' ? em.color : em.textColor}; border:1px solid ${em.color}44;`;
+        chip.textContent = '\u201c' + p.phrase + '\u201d';
         chipEl.appendChild(chip);
       }
     }
-  }
-
-  // ── Valence bars ──────────────────────────────────────────────────────────
-  if (valence.positivity !== undefined || valence.negativity !== undefined) {
-    document.getElementById('valenceBars').style.display = 'flex';
-    const pos = valence.positivity || 0;
-    const neg = valence.negativity || 0;
-    const neu = valence.neutrality || 0;
-    // Animate after paint
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        document.getElementById('vPos').style.width = pos + '%';
-        document.getElementById('vNeg').style.width = neg + '%';
-        document.getElementById('vNeu').style.width = neu + '%';
-        document.getElementById('vPosN').textContent = pos + '%';
-        document.getElementById('vNegN').textContent = neg + '%';
-        document.getElementById('vNeuN').textContent = neu + '%';
-      }, 80);
-    });
-  }
-
-  // ── Word web ──────────────────────────────────────────────────────────────
-  if (topWords.length > 0) {
-    document.getElementById('wordWebWrap').style.display = 'block';
-    startWordWeb(topWords, tempoSpeed);
   }
 
   // ── Legend ────────────────────────────────────────────────────────────────
@@ -961,118 +1026,169 @@ function renderViz(result, entry, ds) {
   const themes    = (result.dominantThemes || []).slice(0,3).join(' · ');
   const sourceTag = result.isLocal
     ? '<span style="font-family:Caveat,cursive;font-size:12px;color:var(--ink-faint);border:1px solid var(--parchment-deep);border-radius:4px;padding:1px 6px">local</span>'
-    : '<span style="font-family:Caveat,cursive;font-size:12px;color:var(--accent);border:1px solid var(--dawn);border-radius:4px;padding:1px 6px">ai ✦</span>';
+    : '<span style="font-family:Caveat,cursive;font-size:12px;color:var(--accent);border:1px solid var(--dawn);border-radius:4px;padding:1px 6px">ai \u2736</span>';
   const meta = document.getElementById('vizMeta');
   meta.innerHTML = `
     <div class="viz-meta-item">${sourceTag}</div>
     <div class="viz-meta-item"><span class="rating-badge ${rating.class}">${rating.key}</span> ${rating.label}</div>
-    <div class="viz-meta-item">⚡ ${result.tempo || '—'}</div>
-    <div class="viz-meta-item">☕ ${result.distractionLevel || '—'}</div>
+    <div class="viz-meta-item">\u26a1 ${result.tempo || '\u2014'}</div>
+    <div class="viz-meta-item">\u2615 ${result.distractionLevel || '\u2014'}</div>
     ${themes ? `<div class="viz-meta-item" style="width:100%;opacity:0.75;font-size:13px">${themes}</div>` : ''}`;
 
-  // Star button
   const starDiv = document.createElement('div');
   starDiv.className = 'viz-meta-item';
   starDiv.style.marginLeft = 'auto';
   const isStarred = starredDates.includes(ds);
   const starBtn = document.createElement('button');
   starBtn.style.cssText = 'font-family:Caveat,cursive;font-size:13px;background:none;border:none;cursor:pointer;color:var(--ink-faint);padding:0;';
-  starBtn.textContent = isStarred ? '✦ starred' : '✦ star this entry';
-  starBtn.onclick = () => { toggleStar(ds); starBtn.textContent = starredDates.includes(ds) ? '✦ starred' : '✦ star this entry'; };
+  starBtn.textContent = isStarred ? '\u2736 starred' : '\u2736 star this entry';
+  starBtn.onclick = () => { toggleStar(ds); starBtn.textContent = starredDates.includes(ds) ? '\u2736 starred' : '\u2736 star this entry'; };
   starDiv.appendChild(starBtn);
   meta.appendChild(starDiv);
 
-  // ── Entry text display ────────────────────────────────────────────────────
-  const entryDisplay = document.getElementById('entryDisplay');
-  const entryText    = document.getElementById('entryDisplayText');
-  entryDisplay.classList.add('visible');
-  entryText.textContent = entry.text || '';
+  // ── Entry display ─────────────────────────────────────────────────────────
+  document.getElementById('entryDisplay').classList.add('visible');
+  document.getElementById('entryDisplayText').textContent = entry.text || '';
+
+  // ── Launch unified canvas ─────────────────────────────────────────────────
+  document.getElementById('unifiedCanvasWrap').style.display = 'block';
+  startUnifiedCanvas(orbNodes, wordNodes, tempoSpeed, orbOpacity, W, H);
 }
 
-// ── WORD WEB (animated canvas) ────────────────────────────────────────────────
+// ── UNIFIED CANVAS (orbs + word web together) ─────────────────────────────────
 let wordWebRAF = null;
 
 function stopWordWeb() {
   if (wordWebRAF) { cancelAnimationFrame(wordWebRAF); wordWebRAF = null; }
 }
 
-function startWordWeb(words, tempoSpeed) {
-  const wrap   = document.getElementById('wordWebWrap');
-  const canvas = document.getElementById('wordWebCanvas');
-  const W = wrap.offsetWidth;
-  const H = 220;
+function startUnifiedCanvas(orbNodes, wordNodes, tempoSpeed, orbOpacity, W, H) {
+  const wrap   = document.getElementById('unifiedCanvasWrap');
+  const canvas = document.getElementById('unifiedCanvas');
   canvas.width  = W;
   canvas.height = H;
+  canvas.style.height = H + 'px';
   const ctx = canvas.getContext('2d');
 
-  // Build nodes
-  const nodes = words.map((w, i) => {
-    const em   = EMOTION_MAP[w.emotion] || { color: '#b8a98a' };
-    const size = 11 + (w.weight / 100) * 14;
-    // Seed positions in loose clusters around a circle
-    const angle = (i / words.length) * 2 * Math.PI;
-    const r     = 60 + Math.random() * 50;
-    return {
-      word:  w.word,
-      color: em.color,
-      size,
-      x: W/2 + Math.cos(angle)*r + (Math.random()-0.5)*30,
-      y: H/2 + Math.sin(angle)*r + (Math.random()-0.5)*30,
-      vx: (Math.random()-0.5) * 0.4,
-      vy: (Math.random()-0.5) * 0.4,
-      // Unique drift phase
-      phase: Math.random() * Math.PI * 2,
-      driftSpeed: 0.3 + Math.random() * 0.4,
-      driftR: 4 + Math.random() * 12,
-    };
-  });
-
+  const speedMult = 1 / (tempoSpeed || 8);
   let t = 0;
-  const speedMult = 1 / (tempoSpeed || 8); // faster tempo = more movement
+
+  // Convert orbNodes to array with mutable positions for gentle drift
+  const orbs = Object.values(orbNodes).map(n => ({
+    ...n,
+    baseX: n.x, baseY: n.y,
+    driftPhase: Math.random() * Math.PI * 2,
+    driftSpeed: 0.18 + Math.random() * 0.12,
+    driftAmp:   3 + Math.random() * 4,
+  }));
+
+  function getOrbPos(key) {
+    return orbs.find(o => o.key === key) || null;
+  }
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
-    t += 0.012 * (1 + speedMult * 2);
+    t += 0.01 * (1 + speedMult * 1.5);
 
-    // Draw connections between same-emotion nodes
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i+1; j < nodes.length; j++) {
-        if (nodes[i].color !== nodes[j].color) continue;
-        const dx = nodes[j].x - nodes[i].x;
-        const dy = nodes[j].y - nodes[i].y;
+    // ── Gently drift orb positions ──────────────────────────────────────────
+    orbs.forEach(o => {
+      o.x = o.baseX + Math.cos(t * o.driftSpeed + o.driftPhase) * o.driftAmp;
+      o.y = o.baseY + Math.sin(t * o.driftSpeed * 0.7 + o.driftPhase) * o.driftAmp * 0.8;
+    });
+
+    // ── Draw co-occurrence connection lines between orbs ────────────────────
+    for (let i=0; i<orbs.length; i++) {
+      for (let j=i+1; j<orbs.length; j++) {
+        const a = orbs[i], b = orbs[j];
+        const dx = b.x - a.x, dy = b.y - a.y;
         const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist > 150) continue;
-        const alpha = (1 - dist/150) * 0.25;
+        const maxDist = Math.min(W, H) * 0.7;
+        if (dist > maxDist) continue;
+        const alpha = (1 - dist/maxDist) * 0.12;
         ctx.beginPath();
-        ctx.strokeStyle = nodes[i].color + Math.round(alpha*255).toString(16).padStart(2,'0');
+        ctx.strokeStyle = `rgba(180,160,120,${alpha})`;
         ctx.lineWidth = 1;
-        ctx.moveTo(nodes[i].x, nodes[i].y);
-        ctx.lineTo(nodes[j].x, nodes[j].y);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
         ctx.stroke();
       }
     }
 
-    // Update and draw nodes
-    nodes.forEach(n => {
-      // Gentle drift orbit
-      n.x += Math.cos(t * n.driftSpeed + n.phase) * 0.35 * (1 + speedMult);
-      n.y += Math.sin(t * n.driftSpeed * 0.7 + n.phase) * 0.28 * (1 + speedMult);
+    // ── Draw orb glows ──────────────────────────────────────────────────────
+    orbs.forEach(o => {
+      const r = o.size / 2;
+      const grd = ctx.createRadialGradient(o.x, o.y, r*0.3, o.x, o.y, r*1.4);
+      grd.addColorStop(0, o.color + 'cc');
+      grd.addColorStop(1, o.color + '00');
+      ctx.beginPath();
+      ctx.arc(o.x, o.y, r*1.4, 0, Math.PI*2);
+      ctx.fillStyle = grd;
+      ctx.globalAlpha = orbOpacity * 0.5;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    });
 
-      // Soft boundary repulsion — keep words inside canvas
-      const pad = n.size + 8;
-      if (n.x < pad)   n.x += (pad - n.x) * 0.06;
-      if (n.x > W-pad) n.x -= (n.x - (W-pad)) * 0.06;
-      if (n.y < pad)   n.y += (pad - n.y) * 0.06;
-      if (n.y > H-pad) n.y -= (n.y - (H-pad)) * 0.06;
+    // ── Draw orb circles ────────────────────────────────────────────────────
+    orbs.forEach(o => {
+      const r = o.size / 2;
+      ctx.beginPath();
+      ctx.arc(o.x, o.y, r, 0, Math.PI*2);
+      ctx.fillStyle = o.color;
+      ctx.globalAlpha = orbOpacity;
+      if (o.key === 'gratitude') {
+        ctx.strokeStyle = '#d4c9a8';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      ctx.fill();
+      ctx.globalAlpha = 1;
 
-      // Gentle center gravity — stop words drifting too far apart
-      n.x += (W/2 - n.x) * 0.002;
-      n.y += (H/2 - n.y) * 0.002;
+      // Orb label
+      ctx.font = `500 ${Math.max(10, r*0.3)}px 'Caveat', cursive`;
+      ctx.fillStyle = o.textColor;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(o.label, o.x, o.y - r*0.12);
+      ctx.font = `${Math.max(9, r*0.24)}px 'Caveat', cursive`;
+      ctx.fillStyle = o.textColor;
+      ctx.globalAlpha = 0.8;
+      ctx.fillText(Math.round(o.value) + '%', o.x, o.y + r*0.28);
+      ctx.globalAlpha = 1;
+    });
+
+    // ── Update + draw word particles ────────────────────────────────────────
+    wordNodes.forEach(n => {
+      const home = getOrbPos(n.homeKey);
+      if (!home) return;
+
+      // Advance orbital angle — heavier words move faster
+      n.angle += n.orbitSpeed * (1 + speedMult * 2);
+
+      // Target position: orbit around home orb's current (drifting) position
+      const tx = home.x + Math.cos(n.angle) * n.orbitR;
+      const ty = home.y + Math.sin(n.angle) * n.orbitR;
+
+      // Soft pull toward target (not instant — creates fluid lag)
+      n.x += (tx - n.x) * 0.08;
+      n.y += (ty - n.y) * 0.08;
+
+      // Draw connection line from word to its home orb
+      const dx = home.x - n.x, dy = home.y - n.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      const lineAlpha = Math.max(0, 0.18 - dist/800);
+      if (lineAlpha > 0.01) {
+        ctx.beginPath();
+        ctx.strokeStyle = n.color + Math.round(lineAlpha*255).toString(16).padStart(2,'0');
+        ctx.lineWidth = 0.8;
+        ctx.moveTo(n.x, n.y);
+        ctx.lineTo(home.x, home.y);
+        ctx.stroke();
+      }
 
       // Draw word
-      ctx.font = `${n.size}px 'Caveat', cursive`;
+      ctx.font = `${n.fontSize}px 'Caveat', cursive`;
       ctx.fillStyle = n.color;
-      ctx.globalAlpha = 0.88;
+      ctx.globalAlpha = 0.9;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(n.word, n.x, n.y);
